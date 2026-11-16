@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "User": {
+      "collection": "users",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "designation": { "type": "string" },
+        "phone": { "type": "string" },
+        "active": { "type": "boolean" },
+        "joinedAt": { "type": "string" },
+        "avatar": { "type": "string" }
+      }
+    },
+    "Task": {
+      "collection": "tasks",
+      "fields": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assigneeId": { "type": "string" },
+        "assignerId": { "type": "string" },
+        "cadence": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "startDate": { "type": "string" },
+        "requiredProof": { "type": "string" },
+        "proofs": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "completedAt": { "type": "string" }
+      }
+    },
+    "AttendanceRecord": {
+      "collection": "attendance",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "punchIn": { "type": "string" },
+        "punchOut": { "type": "string" },
+        "hours": { "type": "number" },
+        "status": { "type": "string" },
+        "shift": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "EodReport": {
+      "collection": "eod_reports",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "summary": { "type": "string" },
+        "tasksCompleted": { "type": "array" },
+        "blockers": { "type": "string" },
+        "hoursWorked": { "type": "number" },
+        "submittedAt": { "type": "string" }
+      }
+    },
+    "LeaveRequest": {
+      "collection": "leaves",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "reason": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "appliedAt": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "type": "string" }
+      }
+    },
+    "SupportTicket": {
+      "collection": "tickets",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "resolvedAt": { "type": "string" }
+      }
+    },
+    "Conversation": {
+      "collection": "conversations",
+      "fields": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "participantIds": { "type": "array" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastMessageAt": { "type": "string" }
+      }
+    },
+    "ChatMessage": {
+      "collection": "messages",
+      "fields": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string" }
+      }
+    }
+  }
+}
