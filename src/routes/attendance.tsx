@@ -1,5 +1,5 @@
 import * as React from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -46,7 +46,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApp, dateKey, newId, isoNow } from "@/lib/store";
+import { useApp, dateKey, newId } from "@/lib/store";
+import { EodLogoutDialog } from "@/components/eod-logout-dialog";
+import { usePunchOutGuard } from "@/hooks/use-punch-out";
 import { formatDistanceMeters } from "@/lib/geofence";
 import { fmtTime, getRecordActualHours, hoursLabel, titleCase } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -107,12 +109,14 @@ function AttendancePage() {
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [deptFilter, setDeptFilter] = React.useState("all");
   const [selectedUserIds, setSelectedUserIds] = React.useState<string[]>([]);
+  const [eodOpen, setEodOpen] = React.useState(false);
   const [punchBusy, setPunchBusy] = React.useState(false);
   const [geofenceError, setGeofenceError] = React.useState<{
     message: string;
     distanceMeters?: number;
     radiusMeters?: number;
   } | null>(null);
+  const { canPunchOut, handlePunchOutClick } = usePunchOutGuard(() => setEodOpen(true));
 
   React.useEffect(() => {
     if (me && !selectedUserId) {
@@ -154,19 +158,6 @@ function AttendancePage() {
         ? `Punched in (${res.status} · ${formatDistanceMeters(res.distanceMeters)} from ${res.officeName ?? "office"}).`
         : "Punched in. Your daily attendance is now active.",
     );
-  };
-
-  const punchOut = () => {
-    update((d) => {
-      const r = d.attendance.find((a) => a.userId === me!.id && a.date === todayKey);
-      if (r && r.punchIn) {
-        r.punchOut = isoNow();
-        r.hours = getRecordActualHours(r);
-        r.status = "present";
-      }
-    });
-    notify(me!.id, "Day completed", "Your working hours have been logged.", "/attendance");
-    toast.success("Punched out. Attendance record updated.");
   };
 
   // Team scope
@@ -446,7 +437,17 @@ function AttendancePage() {
                 {punchBusy ? "Verifying GPS..." : "Punch in today"}
               </Button>
             ) : isPunchedIn ? (
-              <Button size="sm" variant="destructive" onClick={punchOut} className="gap-2">
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handlePunchOutClick}
+                className="gap-2"
+                title={
+                  canPunchOut
+                    ? "Punch out and submit End-of-Day report"
+                    : "Submit proof for at least one completed task before punching out"
+                }
+              >
                 <Clock className="h-4 w-4" /> Punch out
               </Button>
             ) : (
@@ -475,6 +476,23 @@ function AttendancePage() {
                 </p>
               )}
           </div>
+        </div>
+      )}
+
+      {isPunchedIn && !canPunchOut && (
+        <div
+          role="status"
+          className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200"
+        >
+          <span>
+            You must submit proof for at least one completed task before punching out today.
+          </span>
+          <Link
+            to="/tasks"
+            className="font-semibold text-amber-300 underline-offset-2 hover:underline shrink-0"
+          >
+            Go to tasks
+          </Link>
         </div>
       )}
 
@@ -1303,6 +1321,8 @@ function AttendanceCalendarView(props: CalendarViewProps) {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <EodLogoutDialog open={eodOpen} onOpenChange={setEodOpen} mode="logout" onDone={() => {}} />
     </>
   );
 }

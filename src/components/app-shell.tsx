@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { useApp, type Perm, dateKey } from "@/lib/store";
 import { formatDistanceMeters } from "@/lib/geofence";
-import { isMonthlyReviewDayToday } from "@/lib/cadence";
+import { usePunchOutGuard } from "@/hooks/use-punch-out";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -493,30 +493,12 @@ function NotificationBell() {
 
 function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
   const { state, me, punchInWithLocation } = useApp();
-  const navigate = useNavigate();
   const [punchBusy, setPunchBusy] = React.useState(false);
   const todayKey = dateKey(new Date());
   const rec = state.attendance.find((a) => a.userId === me?.id && a.date === todayKey);
 
-  const isPunchedIn = !!(rec?.punchIn && !rec?.punchOut);
-  const isPunchedOut = !!(rec?.punchIn && rec?.punchOut);
-
-  const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-  const isReviewDay = isMonthlyReviewDayToday(state.holidays || []);
-  const hasSubmittedReview = (state.monthlyReviews || []).some(
-    (r) => r.userId === me?.id && r.monthKey === currentMonthKey,
-  );
-
-  const handlePunchOutClick = () => {
-    if (isReviewDay && !hasSubmittedReview) {
-      toast.error(
-        "Monthly Review Required: You must submit your Monthly Review & Reflection for this month before punching out today!",
-      );
-      navigate({ to: "/reviews" });
-      return;
-    }
-    onOpenEod();
-  };
+  const { isPunchedIn, isPunchedOut, canPunchOut, handlePunchOutClick } =
+    usePunchOutGuard(onOpenEod);
 
   const handleQuickPunchIn = async () => {
     if (punchBusy) return;
@@ -560,7 +542,11 @@ function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
           variant="outline"
           onClick={handlePunchOutClick}
           className="h-8 gap-1 text-xs border-border"
-          title="Punch out and submit End-of-Day report"
+          title={
+            canPunchOut
+              ? "Punch out and submit End-of-Day report"
+              : "Submit proof for at least one completed task before punching out"
+          }
         >
           <LogOut className="h-3.5 w-3.5" /> Punch out
         </Button>
@@ -614,6 +600,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [eodOpen, setEodOpen] = React.useState(false);
+  const { isPunchedIn, handlePunchOutClick: handleSidebarPunchOut } = usePunchOutGuard(() =>
+    setEodOpen(true),
+  );
 
   React.useEffect(() => {
     if (localStorage.getItem(SIDEBAR_KEY) === "closed") setSidebarOpen(false);
@@ -726,7 +715,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="border-t border-sidebar-border p-3">
         <button
-          onClick={() => setEodOpen(true)}
+          onClick={() => {
+            if (isPunchedIn) {
+              handleSidebarPunchOut();
+              return;
+            }
+            void logout();
+            void navigate({ to: "/", replace: true });
+          }}
           className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
         >
           <LogOut className="h-4 w-4" /> Log out
@@ -780,9 +776,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <EodLogoutDialog
         open={eodOpen}
         onOpenChange={setEodOpen}
-        onDone={() => {
-          logout();
-          navigate({ to: "/", replace: true });
+        onDone={async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          await logout();
+          void navigate({ to: "/", replace: true });
         }}
       />
     </div>

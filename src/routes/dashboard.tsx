@@ -46,6 +46,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EodLogoutDialog } from "@/components/eod-logout-dialog";
+import { usePunchOutGuard } from "@/hooks/use-punch-out";
 import { useApp, dateKey } from "@/lib/store";
 import { formatDistanceMeters } from "@/lib/geofence";
 import {
@@ -289,9 +290,7 @@ function MemberDashboard({
   const expectedMonthHours = Math.max(1, workingDays * 8);
   const attendancePct = Math.min(100, Math.round((monthHours / expectedMonthHours) * 100));
 
-  const proofToday = myTasks.some((t) =>
-    t.proofs.some((p) => p.submittedAt.slice(0, 10) === todayKey),
-  );
+  const { canPunchOut, handlePunchOutClick } = usePunchOutGuard(() => setEodOpen(true));
 
   const punchIn = async () => {
     if (record?.punchIn || punchBusy) return;
@@ -322,16 +321,6 @@ function MemberDashboard({
     } else {
       toast.success("Punched in. Timer started.");
     }
-  };
-
-  const handlePunchOutClick = () => {
-    if (!proofToday) {
-      toast.error("You must submit proof for at least one completed task before punching out.", {
-        action: { label: "Go to tasks", onClick: () => (window.location.href = "/tasks") },
-      });
-      return;
-    }
-    setEodOpen(true);
   };
 
   const activeGeofence = state.officeGeofence;
@@ -442,10 +431,18 @@ function MemberDashboard({
                   Punch out & Submit EOD
                 </Button>
               )}
-              {!proofToday && punchedIn ? (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Submit at least one task proof today to enable punch out.
-                </p>
+              {!canPunchOut && punchedIn ? (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/40 bg-amber-500/15 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                  <span>
+                    Submit proof for at least one completed task today before punching out.
+                  </span>
+                  <Link
+                    to="/tasks"
+                    className="font-semibold text-amber-950 dark:text-amber-300 underline underline-offset-2 hover:opacity-80 shrink-0"
+                  >
+                    Go to tasks
+                  </Link>
+                </div>
               ) : null}
             </div>
           </CardContent>

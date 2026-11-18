@@ -148,6 +148,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = React.useState(false);
   const [dbConnected, setDbConnected] = React.useState(true);
   const loadedFromServerRef = React.useRef(false);
+  const pendingSaveRef = React.useRef<Promise<unknown>>(Promise.resolve());
 
   const loadScopedState = React.useCallback(async (): Promise<Result> => {
     try {
@@ -235,7 +236,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Persist scoped updates back to server whenever authenticated state changes
   React.useEffect(() => {
     if (!sessionUserId || !loadedFromServerRef.current) return;
-    void saveScopedPortalState({
+    pendingSaveRef.current = saveScopedPortalState({
       data: {
         state: {
           attendance: state.attendance,
@@ -511,6 +512,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     logout: async () => {
       const activeId = sessionUserId;
+      try {
+        await pendingSaveRef.current;
+      } catch {
+        /* ignore */
+      }
       loadedFromServerRef.current = false;
       setClientSessionToken(null);
       try {

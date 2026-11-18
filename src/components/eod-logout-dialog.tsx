@@ -15,6 +15,7 @@ import {
 import { useApp, dateKey, newId, isoNow } from "@/lib/store";
 import { fmtTime, getRecordActualHours, hoursLabel } from "@/lib/format";
 import { isMonthlyReviewDayToday } from "@/lib/cadence";
+import { buildEodPrefillFromTasks, getTodaysCompletedTasks } from "@/lib/eod-helpers";
 import type { EodReport } from "@/lib/types";
 
 export function EodLogoutDialog({
@@ -42,7 +43,9 @@ export function EodLogoutDialog({
 
   const isEdit = mode === "edit";
   const isWrite = mode === "write";
-  const optional = mode === "logout" && me?.role === "super_admin";
+  const isAdminOrSuperAdmin = me?.role === "admin" || me?.role === "super_admin";
+  const optional = mode === "logout" && isAdminOrSuperAdmin;
+  const showSkipAndLogout = mode === "logout" && !isEdit;
 
   const targetUserId = reportToEdit?.userId ?? me?.id;
   const record = state.attendance.find((a) => a.userId === targetUserId && a.date === date);
@@ -64,39 +67,85 @@ export function EodLogoutDialog({
     return 8.0;
   }, [record, existing, isEdit]);
 
-  // Tasks completed today by this user
-  const todaysCompletedTasks = state.tasks.filter(
-    (t) =>
-      t.assigneeId === targetUserId &&
-      (t.status === "completed" || t.status === "approved" || t.status === "submitted") &&
-      (t.dueDate === date || t.proofs.some((p) => p.submittedAt.slice(0, 10) === date)),
+  // Tasks completed or with proof submitted for the selected date
+  const todaysCompletedTasks = React.useMemo(
+    () => getTodaysCompletedTasks(state.tasks, targetUserId, date),
+    [state.tasks, targetUserId, date],
   );
 
+  const prefill = React.useMemo(
+    () => buildEodPrefillFromTasks(todaysCompletedTasks, date),
+    [todaysCompletedTasks, date],
+  );
+
+  const [autoFilledCount, setAutoFilledCount] = React.useState(0);
+  const wasOpenRef = React.useRef(false);
+  const lastReportIdRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
-    if (!open) return;
+    const reportId = reportToEdit?.id ?? null;
+    const justOpened = open && !wasOpenRef.current;
+    const reportChanged = open && reportId !== lastReportIdRef.current;
+    wasOpenRef.current = open;
+    lastReportIdRef.current = reportId;
+
+    if (!open || (!justOpened && !reportChanged)) return;
+
     if (reportToEdit) {
       setDate(reportToEdit.date);
       setWorked(reportToEdit.worked ?? "");
       setCompleted(reportToEdit.completed ?? "");
       setBlockers(reportToEdit.blockers ?? "");
       setHours(String(reportToEdit.hours ?? calculatedHours));
-    } else {
-      setDate(todayKey);
-      setWorked(existing?.worked ?? "");
-      setCompleted(existing?.completed ?? "");
-      setBlockers(existing?.blockers ?? "");
-      setHours(existing?.hours ? String(existing.hours) : String(calculatedHours));
+      setAutoFilledCount(0);
+      return;
     }
-  }, [open, reportToEdit, existing, todayKey, calculatedHours]);
+
+    const activeDate = todayKey;
+    const activeExisting = state.eodReports.find(
+      (r) => r.userId === targetUserId && r.date === activeDate,
+    );
+    const activeTasks = getTodaysCompletedTasks(state.tasks, targetUserId, activeDate);
+    const activePrefill = buildEodPrefillFromTasks(activeTasks, activeDate);
+
+    setDate(activeDate);
+    if (activeExisting) {
+      setWorked(activeExisting.worked ?? "");
+      setCompleted(activeExisting.completed ?? "");
+      setBlockers(activeExisting.blockers ?? "");
+      setHours(activeExisting.hours ? String(activeExisting.hours) : String(calculatedHours));
+      setAutoFilledCount(0);
+    } else {
+      setWorked(activePrefill.workedText);
+      setCompleted(activePrefill.completedText);
+      setBlockers("");
+      setHours(String(calculatedHours));
+      setAutoFilledCount(activeTasks.length);
+    }
+  }, [open, reportToEdit, state.eodReports, state.tasks, targetUserId, todayKey, calculatedHours]);
 
   const handleInsertCompletedTasks = () => {
     if (todaysCompletedTasks.length === 0) return;
-    const taskSummary = todaysCompletedTasks.map((t) => `• ${t.title}`).join("\n");
-    setCompleted((prev) => (prev ? `${prev}\n${taskSummary}` : taskSummary));
-    toast.success("Imported tasks completed today into EOD report");
+    setWorked((prev) => {
+      if (!prev.trim()) return prefill.workedText;
+      return prev.includes(prefill.workedText) ? prev : `${prev}\n${prefill.workedText}`;
+    });
+    setCompleted((prev) => {
+      if (!prev.trim()) return prefill.completedText;
+      return prev.includes(prefill.completedText) ? prev : `${prev}\n${prefill.completedText}`;
+    });
+    setAutoFilledCount(todaysCompletedTasks.length);
+    toast.success("Synced today's completed tasks into your EOD report");
   };
 
   const submit = () => {
+    const isPunchingOutNow = !isWrite && !isEdit && !!record?.punchIn && !record?.punchOut;
+    if (isPunchingOutNow && !isAdminOrSuperAdmin && todaysCompletedTasks.length === 0) {
+      toast.error("You must submit proof for at least one completed task before punching out.");
+      onOpenChange(false);
+      return;
+    }
+
     const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
     const isReviewDay = isMonthlyReviewDayToday(state.holidays || []);
     const hasSubmittedReview = (state.monthlyReviews || []).some(
@@ -172,6 +221,33 @@ export function EodLogoutDialog({
     onDone();
   };
 
+  const handleSkipAndLogout = () => {
+    const hasActiveShift = !!(record?.punchIn && !record.punchOut);
+    if (hasActiveShift && !isAdminOrSuperAdmin && todaysCompletedTasks.length === 0) {
+      toast.error("You must submit proof for at least one completed task before punching out.");
+      onOpenChange(false);
+      return;
+    }
+
+    if (hasActiveShift) {
+      update((d) => {
+        const att = d.attendance.find((a) => a.userId === me!.id && a.date === todayKey);
+        if (att && att.punchIn && !att.punchOut) {
+          att.punchOut = isoNow();
+          att.hours = getRecordActualHours(att);
+          att.status = "present";
+        }
+      });
+      log("Skipped EOD & punched out", `${todayKey} · Immediate punch-out`);
+      toast.success("Punched out successfully.");
+    } else {
+      toast.success("Signed out.");
+    }
+
+    onOpenChange(false);
+    onDone();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto rounded-2xl max-w-xl">
@@ -189,8 +265,8 @@ export function EodLogoutDialog({
               : isWrite
                 ? "Record your shift achievements. Visible to you, your Admin and the Super Admin."
                 : optional
-                  ? "Optional for Super Admins — you can sign out straight away or save your daily record."
-                  : "Summarize your daily progress before signing out. Working hours are calculated automatically."}
+                  ? "Optional for Admins & Super Admins — submit your EOD notes or skip & log out immediately."
+                  : "Summarize your daily progress before signing out, or click Skip & log out to punch out immediately."}
           </DialogDescription>
         </DialogHeader>
 
@@ -252,6 +328,21 @@ export function EodLogoutDialog({
             </div>
           </div>
 
+          {!isEdit && !existing && autoFilledCount > 0 && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/10 px-3.5 py-2.5 text-xs text-foreground">
+              <CheckCircle2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-foreground">
+                  Auto-filled from {autoFilledCount} completed task
+                  {autoFilledCount === 1 ? "" : "s"} today
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Review, edit, or add additional shift notes below before submitting.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label htmlFor="eod-worked" className="text-xs">
               What did you work on today?
@@ -277,7 +368,7 @@ export function EodLogoutDialog({
                   onClick={handleInsertCompletedTasks}
                   className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                 >
-                  <Sparkles className="h-3 w-3" /> Insert {todaysCompletedTasks.length} task
+                  <Sparkles className="h-3 w-3" /> Sync {todaysCompletedTasks.length} task
                   {todaysCompletedTasks.length === 1 ? "" : "s"} done today
                 </button>
               )}
@@ -306,47 +397,43 @@ export function EodLogoutDialog({
             />
           </div>
 
-          <div className="flex flex-wrap justify-end gap-2 pt-2 border-t border-border">
-            <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-border">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              className="text-muted-foreground hover:text-foreground"
+            >
               {isWrite || isEdit ? "Cancel" : "Keep working"}
             </Button>
-            {optional && !isEdit && (
+            <div className="flex flex-wrap items-center gap-2">
+              {showSkipAndLogout && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSkipAndLogout}
+                  className="border-border bg-secondary/40 text-foreground hover:bg-secondary/70"
+                >
+                  Skip &amp; log out
+                </Button>
+              )}
               <Button
-                variant="outline"
+                type="button"
                 size="sm"
-                onClick={() => {
-                  if (record?.punchIn && !record.punchOut) {
-                    update((d) => {
-                      const att = d.attendance.find(
-                        (a) => a.userId === me!.id && a.date === todayKey,
-                      );
-                      if (att && att.punchIn && !att.punchOut) {
-                        att.punchOut = isoNow();
-                        att.hours = getRecordActualHours(att);
-                        att.status = "present";
-                      }
-                    });
-                  }
-                  onOpenChange(false);
-                  onDone();
-                }}
+                disabled={
+                  optional
+                    ? worked.trim().length < 2
+                    : worked.trim().length < 2 || completed.trim().length < 2
+                }
+                onClick={submit}
+                className="gap-1.5"
               >
-                Skip &amp; log out
+                <Check className="h-4 w-4" />
+                {isEdit ? "Update report" : isWrite ? "Save report" : "Submit & log out"}
               </Button>
-            )}
-            <Button
-              size="sm"
-              disabled={
-                optional
-                  ? worked.trim().length < 2
-                  : worked.trim().length < 2 || completed.trim().length < 2
-              }
-              onClick={submit}
-              className="gap-1.5"
-            >
-              <Check className="h-4 w-4" />
-              {isEdit ? "Update report" : isWrite ? "Save report" : "Submit & log out"}
-            </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
