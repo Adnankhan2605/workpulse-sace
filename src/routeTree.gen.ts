@@ -14,16 +14,19 @@ import { Route as AttendanceRouteImport } from './routes/attendance'
 import { Route as AuditRouteImport } from './routes/audit'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as EodRouteImport } from './routes/eod'
+import { Route as HolidaysRouteImport } from './routes/holidays'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as LeadsRouteImport } from './routes/leads'
 import { Route as LeaveRouteImport } from './routes/leave'
 import { Route as MessagesRouteImport } from './routes/messages'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as ReviewsRouteImport } from './routes/reviews'
 import { Route as RolesRouteImport } from './routes/roles'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as TicketsRouteImport } from './routes/tickets'
+import { Route as VaultRouteImport } from './routes/vault'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -48,6 +51,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const EodRoute = EodRouteImport.update({
   id: '/eod',
   path: '/eod',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HolidaysRoute = HolidaysRouteImport.update({
+  id: '/holidays',
+  path: '/holidays',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LeaderboardRoute = LeaderboardRouteImport.update({
@@ -75,6 +83,11 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReviewsRoute = ReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RolesRoute = RolesRouteImport.update({
   id: '/roles',
   path: '/roles',
@@ -100,6 +113,11 @@ const TicketsRoute = TicketsRouteImport.update({
   path: '/tickets',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VaultRoute = VaultRouteImport.update({
+  id: '/vault',
+  path: '/vault',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -107,16 +125,19 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AuditRoute
   '/dashboard': typeof DashboardRoute
   '/eod': typeof EodRoute
+  '/holidays': typeof HolidaysRoute
   '/leaderboard': typeof LeaderboardRoute
   '/leads': typeof LeadsRoute
   '/leave': typeof LeaveRoute
   '/messages': typeof MessagesRoute
   '/reports': typeof ReportsRoute
+  '/reviews': typeof ReviewsRoute
   '/roles': typeof RolesRoute
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/team': typeof TeamRoute
   '/tickets': typeof TicketsRoute
+  '/vault': typeof VaultRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -124,16 +145,19 @@ export interface FileRoutesByTo {
   '/audit': typeof AuditRoute
   '/dashboard': typeof DashboardRoute
   '/eod': typeof EodRoute
+  '/holidays': typeof HolidaysRoute
   '/leaderboard': typeof LeaderboardRoute
   '/leads': typeof LeadsRoute
   '/leave': typeof LeaveRoute
   '/messages': typeof MessagesRoute
   '/reports': typeof ReportsRoute
+  '/reviews': typeof ReviewsRoute
   '/roles': typeof RolesRoute
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/team': typeof TeamRoute
   '/tickets': typeof TicketsRoute
+  '/vault': typeof VaultRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -142,16 +166,19 @@ export interface FileRoutesById {
   '/audit': typeof AuditRoute
   '/dashboard': typeof DashboardRoute
   '/eod': typeof EodRoute
+  '/holidays': typeof HolidaysRoute
   '/leaderboard': typeof LeaderboardRoute
   '/leads': typeof LeadsRoute
   '/leave': typeof LeaveRoute
   '/messages': typeof MessagesRoute
   '/reports': typeof ReportsRoute
+  '/reviews': typeof ReviewsRoute
   '/roles': typeof RolesRoute
   '/settings': typeof SettingsRoute
   '/tasks': typeof TasksRoute
   '/team': typeof TeamRoute
   '/tickets': typeof TicketsRoute
+  '/vault': typeof VaultRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,16 +188,19 @@ export interface FileRouteTypes {
     | '/audit'
     | '/dashboard'
     | '/eod'
+    | '/holidays'
     | '/leaderboard'
     | '/leads'
     | '/leave'
     | '/messages'
     | '/reports'
+    | '/reviews'
     | '/roles'
     | '/settings'
     | '/tasks'
     | '/team'
     | '/tickets'
+    | '/vault'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -178,16 +208,19 @@ export interface FileRouteTypes {
     | '/audit'
     | '/dashboard'
     | '/eod'
+    | '/holidays'
     | '/leaderboard'
     | '/leads'
     | '/leave'
     | '/messages'
     | '/reports'
+    | '/reviews'
     | '/roles'
     | '/settings'
     | '/tasks'
     | '/team'
     | '/tickets'
+    | '/vault'
   id:
     | '__root__'
     | '/'
@@ -195,16 +228,19 @@ export interface FileRouteTypes {
     | '/audit'
     | '/dashboard'
     | '/eod'
+    | '/holidays'
     | '/leaderboard'
     | '/leads'
     | '/leave'
     | '/messages'
     | '/reports'
+    | '/reviews'
     | '/roles'
     | '/settings'
     | '/tasks'
     | '/team'
     | '/tickets'
+    | '/vault'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -213,16 +249,19 @@ export interface RootRouteChildren {
   AuditRoute: typeof AuditRoute
   DashboardRoute: typeof DashboardRoute
   EodRoute: typeof EodRoute
+  HolidaysRoute: typeof HolidaysRoute
   LeaderboardRoute: typeof LeaderboardRoute
   LeadsRoute: typeof LeadsRoute
   LeaveRoute: typeof LeaveRoute
   MessagesRoute: typeof MessagesRoute
   ReportsRoute: typeof ReportsRoute
+  ReviewsRoute: typeof ReviewsRoute
   RolesRoute: typeof RolesRoute
   SettingsRoute: typeof SettingsRoute
   TasksRoute: typeof TasksRoute
   TeamRoute: typeof TeamRoute
   TicketsRoute: typeof TicketsRoute
+  VaultRoute: typeof VaultRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -262,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EodRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/holidays': {
+      id: '/holidays'
+      path: '/holidays'
+      fullPath: '/holidays'
+      preLoaderRoute: typeof HolidaysRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/leaderboard': {
       id: '/leaderboard'
       path: '/leaderboard'
@@ -295,6 +341,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reviews': {
+      id: '/reviews'
+      path: '/reviews'
+      fullPath: '/reviews'
+      preLoaderRoute: typeof ReviewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/roles': {
@@ -332,6 +385,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TicketsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/vault': {
+      id: '/vault'
+      path: '/vault'
+      fullPath: '/vault'
+      preLoaderRoute: typeof VaultRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -341,16 +401,19 @@ const rootRouteChildren: RootRouteChildren = {
   AuditRoute: AuditRoute,
   DashboardRoute: DashboardRoute,
   EodRoute: EodRoute,
+  HolidaysRoute: HolidaysRoute,
   LeaderboardRoute: LeaderboardRoute,
   LeadsRoute: LeadsRoute,
   LeaveRoute: LeaveRoute,
   MessagesRoute: MessagesRoute,
   ReportsRoute: ReportsRoute,
+  ReviewsRoute: ReviewsRoute,
   RolesRoute: RolesRoute,
   SettingsRoute: SettingsRoute,
   TasksRoute: TasksRoute,
   TeamRoute: TeamRoute,
   TicketsRoute: TicketsRoute,
+  VaultRoute: VaultRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

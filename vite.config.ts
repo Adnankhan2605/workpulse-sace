@@ -6,15 +6,7 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-interface LogEntry {
-  code?: string;
-  message?: string;
-}
-
-type LogHandler = (level: string, log: LogEntry) => void;
-type WarnHandler = (warning: LogEntry) => void;
-
-function shouldIgnoreLog(entry?: LogEntry): boolean {
+function shouldIgnoreLog(entry?: { code?: string; message?: string }): boolean {
   return Boolean(
     entry?.code === "MODULE_LEVEL_DIRECTIVE" || entry?.message?.includes('directive "use client"'),
   );
@@ -27,34 +19,14 @@ export default defineConfig({
     server: { entry: "server" },
     client: { entry: "client" },
   },
-  nitro: {
-    rolldownConfig: {
-      onLog(level: string, log: LogEntry, defaultHandler: LogHandler) {
-        if (shouldIgnoreLog(log)) return;
-        defaultHandler(level, log);
-      },
-    },
-    rollupConfig: {
-      onwarn(warning: LogEntry, defaultHandler: WarnHandler) {
-        if (shouldIgnoreLog(warning)) return;
-        defaultHandler(warning);
-      },
-    },
-  },
   vite: {
     build: {
       rolldownOptions: {
-        onLog(level: string, log: LogEntry, defaultHandler: LogHandler) {
+        onLog(level, log, defaultHandler) {
           if (shouldIgnoreLog(log)) return;
           defaultHandler(level, log);
         },
-      },
-      rollupOptions: {
-        onLog(level: string, log: LogEntry, defaultHandler: LogHandler) {
-          if (shouldIgnoreLog(log)) return;
-          defaultHandler(level, log);
-        },
-        onwarn(warning: LogEntry, defaultHandler: WarnHandler) {
+        onwarn(warning, defaultHandler) {
           if (shouldIgnoreLog(warning)) return;
           defaultHandler(warning);
         },

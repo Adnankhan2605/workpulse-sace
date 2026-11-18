@@ -2,14 +2,16 @@ import * as React from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   AlarmClock,
+  AlertTriangle,
   CalendarCheck,
   CheckCircle2,
   ClipboardList,
   Clock,
   LifeBuoy,
+  Loader2,
+  MapPin,
   MessageSquare,
   Plane,
-  Quote,
   TrendingUp,
   Trophy,
   UserCheck,
@@ -28,6 +30,8 @@ import { toast } from "sonner";
 import { AppShell, EmptyState, Initials, PageHeader } from "@/components/app-shell";
 import DailyVisionCard from "@/components/daily-vision-card";
 import PersonalTodoCard from "@/components/personal-todo-card";
+import DepartmentPerformanceWidget from "@/components/department-performance-widget";
+import { DualTimezoneClock } from "@/components/dual-timezone-clock";
 import { StatCard, StatusPill } from "@/components/portal-ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +46,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EodLogoutDialog } from "@/components/eod-logout-dialog";
-import { useApp, dateKey, newId, isoNow } from "@/lib/store";
+import { useApp, dateKey } from "@/lib/store";
+import { formatDistanceMeters } from "@/lib/geofence";
 import {
   elapsed,
   fmtDateTime,
@@ -229,12 +234,18 @@ function MemberDashboard({
   dailyVision: string;
   onOpenVisionModal: () => void;
 }) {
-  const { state, me, update, notify } = useApp();
+  const { state, me, punchInWithLocation } = useApp();
   const now = useClock();
   const today = new Date();
   const todayKey = dateKey(today);
   const mk = monthKey(today);
   const [eodOpen, setEodOpen] = React.useState(false);
+  const [punchBusy, setPunchBusy] = React.useState(false);
+  const [geofenceAlert, setGeofenceAlert] = React.useState<{
+    message: string;
+    distanceMeters?: number;
+    radiusMeters?: number;
+  } | null>(null);
 
   const record = state.attendance.find((a) => a.userId === me!.id && a.date === todayKey);
   const punchedIn = !!record?.punchIn && !record?.punchOut;
@@ -282,19 +293,35 @@ function MemberDashboard({
     t.proofs.some((p) => p.submittedAt.slice(0, 10) === todayKey),
   );
 
-  const punchIn = () => {
-    if (record?.punchIn) return;
-    update((d) => {
-      d.attendance.push({
-        id: newId(),
-        userId: me!.id,
-        date: todayKey,
-        punchIn: isoNow(),
-        punchOut: null,
-        hours: 0,
+  const punchIn = async () => {
+    if (record?.punchIn || punchBusy) return;
+    setPunchBusy(true);
+    setGeofenceAlert(null);
+
+    const res = await punchInWithLocation("dashboard");
+    setPunchBusy(false);
+
+    if (!res.ok) {
+      const msg =
+        res.error ??
+        "Access Denied: You are outside the office premises. Please move closer to punch in.";
+      setGeofenceAlert({
+        message: msg,
+        ...(res.distanceMeters !== undefined ? { distanceMeters: res.distanceMeters } : {}),
+        ...(res.radiusMeters !== undefined ? { radiusMeters: res.radiusMeters } : {}),
       });
-    });
-    toast.success("Punched in. Timer started.");
+      toast.error(msg);
+      return;
+    }
+
+    setGeofenceAlert(null);
+    if (res.distanceMeters !== undefined) {
+      toast.success(
+        `Punched in! Verified ${res.status === "Bypassed" ? "location" : "inside office premises"} (${formatDistanceMeters(res.distanceMeters)} from ${res.officeName ?? "office"}).`,
+      );
+    } else {
+      toast.success("Punched in. Timer started.");
+    }
   };
 
   const handlePunchOutClick = () => {
@@ -307,6 +334,8 @@ function MemberDashboard({
     setEodOpen(true);
   };
 
+  const activeGeofence = state.officeGeofence;
+
   return (
     <>
       <PageHeader
@@ -317,11 +346,7 @@ function MemberDashboard({
           month: "long",
           year: "numeric",
         })}
-        actions={
-          <span className="rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold tabular-nums shadow-xs">
-            {new Date(now).toLocaleTimeString()}
-          </span>
-        }
+        actions={<DualTimezoneClock now={now} variant="card" />}
       />
 
       <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -330,15 +355,28 @@ function MemberDashboard({
       </div>
 
       <div className="mb-6">
-        <Card className="rounded-2xl">
+        <Card className="rounded-2xl border-border">
           <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold">Work status</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold">Work status</p>
+                {activeGeofence?.enabled && (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <span aria-hidden="true">·</span>
+                    <MapPin className="h-3.5 w-3.5 text-primary" />
+                    <span className="tabular-nums">
+                      {activeGeofence.officeName} (
+                      {formatDistanceMeters(activeGeofence.radiusMeters)} radius)
+                    </span>
+                  </span>
+                )}
+              </div>
               <StatusPill
                 value={punchedIn ? "present" : record?.punchOut ? "completed" : "week_off"}
                 label={punchedIn ? "Working" : record?.punchOut ? "Day complete" : "Not punched in"}
               />
             </div>
+
             <p className="mt-4 text-3xl font-bold tabular-nums text-foreground">
               {record?.punchIn && !record.punchOut
                 ? elapsed(record.punchIn, now)
@@ -346,13 +384,54 @@ function MemberDashboard({
                   ? hoursLabel(record.hours)
                   : "00:00:00"}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              In {fmtTime(record?.punchIn)} · Out {fmtTime(record?.punchOut)}
-            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+              <span>
+                In {fmtTime(record?.punchIn)} · Out {fmtTime(record?.punchOut)}
+              </span>
+              {record?.punchIn && record.geofenceStatus && (
+                <span className="inline-flex items-center gap-1 text-emerald-500 font-medium">
+                  <MapPin className="h-3 w-3" />
+                  {record.geofenceStatus}
+                  {typeof record.punchInDistanceMeters === "number"
+                    ? ` (${formatDistanceMeters(record.punchInDistanceMeters)})`
+                    : ""}
+                </span>
+              )}
+            </div>
+
+            {geofenceAlert && !record?.punchIn && (
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold leading-snug">{geofenceAlert.message}</p>
+                  {typeof geofenceAlert.distanceMeters === "number" &&
+                    typeof geofenceAlert.radiusMeters === "number" && (
+                      <p className="text-[11px] opacity-90 tabular-nums">
+                        Measured distance: {formatDistanceMeters(geofenceAlert.distanceMeters)} ·
+                        Allowed radius: {formatDistanceMeters(geofenceAlert.radiusMeters)}
+                      </p>
+                    )}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4">
               {!record?.punchIn ? (
-                <Button className="w-full shadow-xs" onClick={punchIn}>
-                  Punch in
+                <Button className="w-full gap-2 shadow-xs" disabled={punchBusy} onClick={punchIn}>
+                  {punchBusy ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Verifying GPS location...
+                    </>
+                  ) : (
+                    <>
+                      <MapPin className="h-4 w-4" />
+                      Punch in
+                    </>
+                  )}
                 </Button>
               ) : record.punchOut ? (
                 <Button className="w-full" variant="outline" disabled>
@@ -391,7 +470,7 @@ function MemberDashboard({
                 : "Not punched in"
           }
           icon={Clock}
-          accent={punchedIn ? "teal" : undefined}
+          {...(punchedIn ? { accent: "teal" as const } : {})}
         />
         <StatCard
           label="Hours this month"
@@ -576,7 +655,8 @@ function AdminDashboard({
         title="Team overview"
         description={`${team.length} people reporting into you · ${today.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })}`}
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <DualTimezoneClock variant="card" />
             <Button asChild size="sm">
               <Link to="/team">Create account</Link>
             </Button>
@@ -586,7 +666,7 @@ function AdminDashboard({
             <Button asChild size="sm" variant="outline">
               <Link to="/reports">Generate report</Link>
             </Button>
-          </>
+          </div>
         }
       />
 
@@ -613,6 +693,8 @@ function AdminDashboard({
         leaves={state.leaves}
         mode="team"
       />
+
+      {(me?.role === "admin" || me?.role === "super_admin") && <DepartmentPerformanceWidget />}
 
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
         <Card className="rounded-2xl lg:col-span-2">

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { askAddyAssistant, useApp } from "@/lib/store";
+import { sanitizeExternalUrl } from "@/lib/security";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -220,7 +221,9 @@ export function AddyAssistant() {
                   )}
                 >
                   <div className="prose prose-xs dark:prose-invert max-w-none text-xs">
-                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                    <ReactMarkdown urlTransform={(url) => sanitizeExternalUrl(url) ?? ""}>
+                      {m.content}
+                    </ReactMarkdown>
                   </div>
                 </div>
               </div>

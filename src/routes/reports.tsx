@@ -42,6 +42,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApp, dateKey } from "@/lib/store";
 import { hoursLabel, titleCase } from "@/lib/format";
+import { sanitizeCsvCell } from "@/lib/security";
 import { cn } from "@/lib/utils";
 import { SaceLogo } from "@/components/sace-logo";
 import type { AppState, AttendanceRecord, EodReport, Task, User } from "@/lib/types";
@@ -127,9 +128,9 @@ function calculateMonthlyPerformance(
     // Tasks in month
     const userTasks = state.tasks.filter((t: Task) => {
       if (t.assigneeId !== u.id) return false;
-      const createdMonth = t.createdAt ? t.createdAt.slice(0, 7) : "";
+      const startMonth = t.startDate ? t.startDate.slice(0, 7) : "";
       const dueMonth = t.dueDate ? t.dueDate.slice(0, 7) : "";
-      return createdMonth === prefix || dueMonth === prefix || (!t.createdAt && !t.dueDate);
+      return startMonth === prefix || dueMonth === prefix || (!t.startDate && !t.dueDate);
     });
 
     const tasksAssigned = userTasks.length;
@@ -242,7 +243,7 @@ function ReportsPage() {
   const hasAccess = can("view_reports");
 
   const people = React.useMemo(() => visibleUsers().filter((u) => u.active), [visibleUsers]);
-  const [yearStr, mStr] = selectedMonthKey.split("-");
+  const [yearStr = "2026", mStr = "08"] = selectedMonthKey.split("-");
   const selectedYear = parseInt(yearStr, 10);
   const selectedMonth = parseInt(mStr, 10) - 1;
 
@@ -293,22 +294,22 @@ function ReportsPage() {
     const body = monthlyReport.data
       .map((r) =>
         [
-          `"${r.user.fullName}"`,
-          `"${r.user.designation}"`,
-          `"${r.user.department || "General"}"`,
-          r.grade,
-          r.score,
-          r.daysPresent,
-          r.totalWorkingDays,
-          `${r.attendanceRate}%`,
-          r.hoursWorked.toFixed(1),
-          r.avgDailyHours.toFixed(1),
-          r.tasksAssigned,
-          r.tasksDone,
-          `${r.taskCompletionRate}%`,
-          r.proofsSubmitted,
-          r.eodsSubmitted,
-          `${r.eodRate}%`,
+          sanitizeCsvCell(r.user.fullName),
+          sanitizeCsvCell(r.user.designation),
+          sanitizeCsvCell(r.user.department || "General"),
+          sanitizeCsvCell(r.grade),
+          sanitizeCsvCell(r.score),
+          sanitizeCsvCell(r.daysPresent),
+          sanitizeCsvCell(r.totalWorkingDays),
+          sanitizeCsvCell(`${r.attendanceRate}%`),
+          sanitizeCsvCell(r.hoursWorked.toFixed(1)),
+          sanitizeCsvCell(r.avgDailyHours.toFixed(1)),
+          sanitizeCsvCell(r.tasksAssigned),
+          sanitizeCsvCell(r.tasksDone),
+          sanitizeCsvCell(`${r.taskCompletionRate}%`),
+          sanitizeCsvCell(r.proofsSubmitted),
+          sanitizeCsvCell(r.eodsSubmitted),
+          sanitizeCsvCell(`${r.eodRate}%`),
         ].join(","),
       )
       .join("\n");
@@ -327,17 +328,17 @@ function ReportsPage() {
     const body = workforceRows
       .map((r) =>
         [
-          `"${r.user.fullName}"`,
-          `"${r.user.designation}"`,
-          r.present,
-          r.hours.toFixed(1),
-          r.tasks,
-          r.done,
-          r.rate,
+          sanitizeCsvCell(r.user.fullName),
+          sanitizeCsvCell(r.user.designation),
+          sanitizeCsvCell(r.present),
+          sanitizeCsvCell(r.hours.toFixed(1)),
+          sanitizeCsvCell(r.tasks),
+          sanitizeCsvCell(r.done),
+          sanitizeCsvCell(r.rate),
         ].join(","),
       )
       .join("\n");
-    const blob = new Blob([`${header}\n${body}`], { type: "text/csv" });
+    const blob = new Blob([`${header}\n${body}`], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

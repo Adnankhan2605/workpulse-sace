@@ -26,6 +26,12 @@ import {
 } from "lucide-react";
 import { AppShell, EmptyState, Initials, PageHeader } from "@/components/app-shell";
 import ProofReviewSection from "@/components/proof-review-section";
+import {
+  isSafeImageSrc,
+  sanitizeExternalUrl,
+  validateAndNormalizeImage,
+  validateProofDocumentFile,
+} from "@/lib/security";
 import { StatCard, StatusPill } from "@/components/portal-ui";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -296,14 +302,20 @@ function TasksPage() {
                         <div className="flex items-center gap-2 text-primary font-medium text-xs">
                           <LinkIcon className="h-4 w-4 shrink-0" /> Verified Web Link
                         </div>
-                        <a
-                          href={proof.value}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-foreground font-mono truncate underline hover:text-primary flex items-center gap-1"
-                        >
-                          {proof.value} <ExternalLink className="h-3 w-3 inline shrink-0" />
-                        </a>
+                        {sanitizeExternalUrl(proof.value) ? (
+                          <a
+                            href={sanitizeExternalUrl(proof.value)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-foreground font-mono truncate underline hover:text-primary flex items-center gap-1"
+                          >
+                            {proof.value} <ExternalLink className="h-3 w-3 inline shrink-0" />
+                          </a>
+                        ) : (
+                          <span className="text-xs text-destructive font-mono truncate">
+                            Blocked unsafe URL
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <div className="h-28 bg-muted/30 p-4 flex flex-col justify-between border-b border-border/50">
@@ -604,14 +616,20 @@ function TasksPage() {
                                       </div>
 
                                       {p.type === "link" ? (
-                                        <a
-                                          href={p.value}
-                                          className="mt-1 block truncate text-primary underline"
-                                          target="_blank"
-                                          rel="noreferrer"
-                                        >
-                                          {p.value}
-                                        </a>
+                                        sanitizeExternalUrl(p.value) ? (
+                                          <a
+                                            href={sanitizeExternalUrl(p.value)!}
+                                            className="mt-1 block truncate text-primary underline"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                          >
+                                            {p.value}
+                                          </a>
+                                        ) : (
+                                          <span className="mt-1 block truncate text-destructive font-mono">
+                                            Blocked unsafe URL
+                                          </span>
+                                        )
                                       ) : isImage ? (
                                         <button
                                           type="button"
@@ -650,6 +668,10 @@ function TasksPage() {
                         <ProofReviewSection
                           task={task}
                           onStatusChange={(newStatus) => {
+                            if (!isAdmin) {
+                              toast.error("Admin privileges required to review task proofs.");
+                              return;
+                            }
                             const statusMap: Record<string, TaskStatus> = {
                               Accepted: "approved",
                               Rejected: "rejected",
@@ -935,14 +957,20 @@ function TaskActions({
                           </div>
                         </div>
                       ) : p.type === "link" ? (
-                        <a
-                          href={p.value}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block text-primary underline truncate text-xs font-mono break-all"
-                        >
-                          {p.value} <ExternalLink className="h-3 w-3 inline shrink-0 ml-1" />
-                        </a>
+                        sanitizeExternalUrl(p.value) ? (
+                          <a
+                            href={sanitizeExternalUrl(p.value)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-primary underline truncate text-xs font-mono break-all"
+                          >
+                            {p.value} <ExternalLink className="h-3 w-3 inline shrink-0 ml-1" />
+                          </a>
+                        ) : (
+                          <span className="block text-destructive text-xs font-mono">
+                            Blocked unsafe URL
+                          </span>
+                        )
                       ) : (
                         <p className="text-foreground font-mono text-xs break-all bg-muted/50 p-2 rounded">
                           {p.value}
@@ -1031,17 +1059,24 @@ function SubmitProofDialog({ task }: { task: Task }) {
   const [value, setValue] = React.useState("");
   const [note, setNote] = React.useState("");
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setValue(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      setValue(file.name);
+    try {
+      if (type === "image") {
+        const normalized = await validateAndNormalizeImage(file, {
+          maxDim: 960,
+          quality: 0.78,
+        });
+        setValue(normalized);
+      } else {
+        const { safeName } = validateProofDocumentFile(file);
+        setValue(safeName);
+      }
+    } catch (err) {
+      e.target.value = "";
+      setValue("");
+      toast.error(err instanceof Error ? err.message : "Invalid file upload.");
     }
   };
 
@@ -1079,16 +1114,16 @@ function SubmitProofDialog({ task }: { task: Task }) {
           {type === "image" ? (
             <div className="space-y-2">
               <Label htmlFor="proof-file" className="text-xs">
-                Upload Screenshot / Image
+                Upload Screenshot / Image (JPEG, PNG, WebP · max 2 MB)
               </Label>
               <Input
                 id="proof-file"
                 type="file"
-                accept="image/*"
-                onChange={handleFileUpload}
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(e) => void handleFileUpload(e)}
                 className="text-xs"
               />
-              {value && value.startsWith("data:image") && (
+              {value && isSafeImageSrc(value) && (
                 <div className="mt-2 rounded-lg border p-1 bg-muted/40 max-h-36 overflow-hidden flex justify-center">
                   <img src={value} alt="Preview" className="max-h-32 rounded object-contain" />
                 </div>
@@ -1141,10 +1176,25 @@ function SubmitProofDialog({ task }: { task: Task }) {
             className="w-full"
             disabled={!value.trim()}
             onClick={() => {
+              let submittedValue = value.trim();
+              if (type === "link") {
+                const safeUrl = sanitizeExternalUrl(submittedValue);
+                if (!safeUrl) {
+                  toast.error("Please enter a valid http:// or https:// URL.");
+                  return;
+                }
+                submittedValue = safeUrl;
+              }
               update((d) => {
                 const t = d.tasks.find((x) => x.id === task.id);
                 if (!t) return;
-                t.proofs.push({ id: newId(), type, value, note, submittedAt: isoNow() });
+                t.proofs.push({
+                  id: newId(),
+                  type,
+                  value: submittedValue,
+                  note: note.trim(),
+                  submittedAt: isoNow(),
+                });
                 t.status = "submitted";
               });
               const adminUser = state.users.find(

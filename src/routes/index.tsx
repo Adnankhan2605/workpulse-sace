@@ -28,7 +28,7 @@ export const Route = createFileRoute("/")({
 });
 
 function SignIn() {
-  const { login, me } = useApp();
+  const { login, me, ready } = useApp();
   const navigate = useNavigate();
   const [identifier, setIdentifier] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -36,29 +36,37 @@ function SignIn() {
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
-    if (me) navigate({ to: "/dashboard", replace: true });
-  }, [me, navigate]);
+    if (ready && me) {
+      void navigate({ to: "/dashboard", replace: true });
+    }
+  }, [ready, me, navigate]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier.trim() || !password.trim()) {
+    if (busy) return;
+    if (!identifier.trim() || !password) {
       setError("Please enter your username/email and password.");
       return;
     }
     setBusy(true);
-    const res = await login(identifier, password);
-    setBusy(false);
-    if (!res.ok) {
-      setError(res.error ?? "Unable to sign in.");
-      return;
-    }
     setError(null);
-    toast.success("Welcome back to SACE Workforce Portal");
-    navigate({ to: "/dashboard" });
+    try {
+      const res = await login(identifier, password);
+      if (!res.ok) {
+        setError(res.error ?? "Unable to sign in.");
+        return;
+      }
+      toast.success("Welcome back to SACE Workforce Portal");
+      await navigate({ to: "/dashboard", replace: true });
+    } catch {
+      setError("Unable to complete sign in. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-2">
+    <div className="grid min-h-screen lg:grid-cols-2 transition-opacity duration-200">
       {/* Left Branding Showcase */}
       <div className="relative hidden flex-col justify-between bg-gradient-to-br from-purple-950 via-purple-900 to-slate-950 p-12 text-white lg:flex">
         <div className="flex items-center gap-4">

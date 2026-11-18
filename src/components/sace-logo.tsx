@@ -66,9 +66,7 @@ export function SaceLogo({
       >
         <img src={logoSrc} alt="SACE Group" className="h-full w-auto object-contain" />
       </div>
-      {variant !== "badge" && (
-        <span className="font-bold tracking-tight text-foreground text-base">WORKPULSE</span>
-      )}
+      <span className="font-bold tracking-tight text-foreground text-base">WORKPULSE</span>
     </div>
   );
 }

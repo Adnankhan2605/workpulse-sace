@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useApp } from "@/lib/store";
 
 // Curated list of daily motivational & leadership quotes
 const dailyQuotes = [
@@ -12,13 +13,18 @@ const dailyQuotes = [
 ];
 
 export default function DailyVisionCard() {
+  const { me } = useApp();
   const [vision, setVision] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [customInput, setCustomInput] = useState("");
 
+  const visionKey = me ? `sace_custom_vision_${me.id}` : null;
+  const dateKeyName = me ? `sace_vision_date_${me.id}` : null;
+
   useEffect(() => {
-    const savedCustomVision = localStorage.getItem("sace_custom_vision");
-    const savedDate = localStorage.getItem("sace_vision_date");
+    if (!visionKey || !dateKeyName) return;
+    const savedCustomVision = localStorage.getItem(visionKey);
+    const savedDate = localStorage.getItem(dateKeyName);
     const todayStr = new Date().toDateString();
 
     // Only use custom vision if it was explicitly saved today AND isn't leftover test data
@@ -26,30 +32,35 @@ export default function DailyVisionCard() {
       setVision(savedCustomVision);
     } else {
       // Clear outdated test data and load today's automatic quote
-      localStorage.removeItem("sace_custom_vision");
-      localStorage.removeItem("sace_vision_date");
+      localStorage.removeItem(visionKey);
+      localStorage.removeItem(dateKeyName);
 
       const dayIndex = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) % dailyQuotes.length;
-      setVision(dailyQuotes[dayIndex]);
+      setVision(dailyQuotes[dayIndex] ?? dailyQuotes[0] ?? "");
     }
-  }, []);
+  }, [visionKey, dateKeyName]);
 
   const handleSave = () => {
+    if (!visionKey || !dateKeyName) return;
     if (customInput.trim()) {
       setVision(customInput);
-      localStorage.setItem("sace_custom_vision", customInput);
-      localStorage.setItem("sace_vision_date", new Date().toDateString());
+      localStorage.setItem(visionKey, customInput);
+      localStorage.setItem(dateKeyName, new Date().toDateString());
     }
     setIsEditing(false);
   };
 
   const handleResetToDaily = () => {
-    localStorage.removeItem("sace_custom_vision");
-    localStorage.removeItem("sace_vision_date");
+    if (visionKey && dateKeyName) {
+      localStorage.removeItem(visionKey);
+      localStorage.removeItem(dateKeyName);
+    }
     const dayIndex = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) % dailyQuotes.length;
-    setVision(dailyQuotes[dayIndex]);
+    setVision(dailyQuotes[dayIndex] ?? dailyQuotes[0] ?? "");
     setIsEditing(false);
   };
+
+  if (!me) return null;
 
   return (
     <div className="bg-[#2D0029] text-white p-6 rounded-2xl shadow-xl relative overflow-hidden flex flex-col justify-between min-h-[140px] max-w-xl">

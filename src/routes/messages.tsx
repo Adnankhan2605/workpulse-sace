@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   Bell,
   CheckCheck,
+  ClipboardPaste,
   Hash,
   Inbox,
   Megaphone,
@@ -176,11 +177,11 @@ function MessagesPage() {
     }
   }, [state.conversations.length, state.users, update]);
 
-  // All accessible conversations for current user
+  // All accessible conversations for current user (strict participant scoping)
   const mine = React.useMemo(() => {
     if (!me) return [];
     return state.conversations.filter(
-      (c) => c.participantIds.includes(me.id) || c.kind === "announcement" || c.kind === "group",
+      (c) => c.participantIds.includes(me.id) || c.kind === "announcement",
     );
   }, [state.conversations, me]);
 
@@ -267,11 +268,9 @@ function MessagesPage() {
 
   // Ensure activeId is valid
   React.useEffect(() => {
-    if (
-      filteredConversations.length > 0 &&
-      (!activeId || !filteredConversations.some((c) => c.id === activeId))
-    ) {
-      setActiveId(filteredConversations[0].id);
+    const firstConvo = filteredConversations[0];
+    if (firstConvo && (!activeId || !filteredConversations.some((c) => c.id === activeId))) {
+      setActiveId(firstConvo.id);
     }
   }, [filteredConversations, activeId]);
 
@@ -1077,6 +1076,25 @@ function MessagesPage() {
                       {quick}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const clip = await navigator.clipboard.readText();
+                        if (clip) {
+                          setDraft((prev) => (prev ? `${prev} ${clip}` : clip));
+                          toast.success("Pasted from clipboard into message");
+                        } else {
+                          toast.error("Clipboard is empty");
+                        }
+                      } catch {
+                        toast.error("Clipboard access blocked — press Ctrl/Cmd+V in the box below");
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-full bg-primary/10 border border-primary/30 px-2.5 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 transition"
+                  >
+                    <ClipboardPaste className="h-3 w-3" /> Paste copied secret
+                  </button>
                 </div>
 
                 {/* Message Composer Box */}

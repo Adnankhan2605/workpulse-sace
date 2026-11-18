@@ -127,6 +127,10 @@ function HolidaysPage() {
   }, [holidays, currentMonthPrefix]);
 
   const handleOpenAdd = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     setFormName("");
     setFormDate(todayKey);
     setFormDesc("");
@@ -136,6 +140,10 @@ function HolidaysPage() {
   };
 
   const handleOpenEdit = (h: CompanyHoliday) => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     setEditingHoliday(h);
     setFormName(h.name);
     setFormDate(h.date);
@@ -146,6 +154,10 @@ function HolidaysPage() {
 
   const handleSaveHoliday = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     if (!formName.trim() || !formDate) {
       toast.error("Please provide a holiday name and date.");
       return;
@@ -171,7 +183,7 @@ function HolidaysPage() {
         description: formDesc.trim(),
         mandatory: formMandatory,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...(me?.id ? { createdBy: me.id } : {}),
       };
       update((draft) => {
         if (!draft.holidays) draft.holidays = [];
@@ -185,6 +197,10 @@ function HolidaysPage() {
   };
 
   const handleDeleteHoliday = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     if (!deletingHoliday) return;
     const name = deletingHoliday.name;
     const date = deletingHoliday.date;
@@ -197,6 +213,11 @@ function HolidaysPage() {
   };
 
   const handleLoadDefaults = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
+    const createdByProp = me?.id ? { createdBy: me.id } : {};
     const defaults: CompanyHoliday[] = [
       {
         id: newId(),
@@ -205,7 +226,7 @@ function HolidaysPage() {
         description: "New Year celebration and company recess.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -214,7 +235,7 @@ function HolidaysPage() {
         description: "National remembrance observance and paid holiday.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -223,7 +244,7 @@ function HolidaysPage() {
         description: "National holiday observance and workforce office closure.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -232,7 +253,7 @@ function HolidaysPage() {
         description: "Honoring workforce dedication and employee leadership across SACE.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -241,7 +262,7 @@ function HolidaysPage() {
         description: "National Thanksgiving holiday with official office closure.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -250,7 +271,7 @@ function HolidaysPage() {
         description: "Extended holiday weekend for SACE Group workforce.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
       {
         id: newId(),
@@ -259,7 +280,7 @@ function HolidaysPage() {
         description: "Annual winter holiday office closure.",
         mandatory: true,
         createdAt: isoNow(),
-        createdBy: me?.id,
+        ...createdByProp,
       },
     ];
 
@@ -308,7 +329,7 @@ function HolidaysPage() {
           label="Upcoming Holidays"
           value={upcomingHolidays.length}
           hint={
-            upcomingHolidays.length > 0
+            upcomingHolidays[0]
               ? `Next: ${upcomingHolidays[0].name} (${fmtDate(upcomingHolidays[0].date)})`
               : "No upcoming holidays"
           }
@@ -421,13 +442,15 @@ function HolidaysPage() {
                       ? "No company holidays have been scheduled yet. Click Add Holiday or Load 2026 Holidays to get started."
                       : "No holidays have been scheduled for this period."
                 }
-                action={
-                  isAdmin ? (
-                    <Button size="sm" onClick={handleOpenAdd} className="mt-2 gap-1.5">
-                      <Plus className="h-4 w-4" /> Add Holiday
-                    </Button>
-                  ) : undefined
-                }
+                {...(isAdmin
+                  ? {
+                      action: (
+                        <Button size="sm" onClick={handleOpenAdd} className="mt-2 gap-1.5">
+                          <Plus className="h-4 w-4" /> Add Holiday
+                        </Button>
+                      ),
+                    }
+                  : {})}
               />
             </div>
           ) : (

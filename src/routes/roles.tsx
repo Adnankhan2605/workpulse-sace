@@ -28,8 +28,17 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { PASSWORD_POLICY_ERROR, isStrongPassword } from "@/lib/security";
 import { useApp, type Perm } from "@/lib/store";
-import type { Role } from "@/lib/types";
+import type { Role, User } from "@/lib/types";
 
 export const Route = createFileRoute("/roles")({
   head: () => ({
@@ -198,8 +207,8 @@ function CreateAccount() {
       toast.error("An account with that email already exists");
       return;
     }
-    if (form.password.trim().length < 6) {
-      toast.error("Password must be at least 6 characters");
+    if (!isStrongPassword(form.password)) {
+      toast.error(PASSWORD_POLICY_ERROR);
       return;
     }
     setBusy(true);
@@ -241,7 +250,7 @@ function CreateAccount() {
               [
                 ["fullName", "Full name", "text"],
                 ["email", "Email", "email"],
-                ["password", "Password", "text"],
+                ["password", "Password (min 12 chars)", "password"],
                 ["designation", "Designation", "text"],
                 ["department", "Department", "text"],
               ] as const
@@ -302,6 +311,9 @@ function CreateAccount() {
 
 function AccountList() {
   const { state, me, saveUser, deleteAccount, log } = useApp();
+  const [resetTarget, setResetTarget] = React.useState<User | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = React.useState("");
+  const [resetBusy, setResetBusy] = React.useState(false);
   const apply = async (
     input: Parameters<typeof saveUser>[0],
     success: string,
@@ -379,15 +391,8 @@ function AccountList() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const next = window.prompt(`New password for ${u.fullName}`);
-                    if (!next || next.trim().length < 6) {
-                      if (next !== null) toast.error("Password must be at least 6 characters");
-                      return;
-                    }
-                    void apply({ userId: u.id, password: next.trim() }, "Password updated", [
-                      "password_reset",
-                      u.fullName,
-                    ]);
+                    setResetTarget(u);
+                    setResetPasswordValue("");
                   }}
                 >
                   Reset password
@@ -444,6 +449,66 @@ function AccountList() {
           );
         })}
       </CardContent>
+
+      <Dialog
+        open={!!resetTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setResetTarget(null);
+            setResetPasswordValue("");
+          }
+        }}
+      >
+        <DialogContent className="rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Set a new strong password for {resetTarget?.fullName ?? "this user"}.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!resetTarget) return;
+              if (!isStrongPassword(resetPasswordValue)) {
+                toast.error(PASSWORD_POLICY_ERROR);
+                return;
+              }
+              setResetBusy(true);
+              await apply(
+                { userId: resetTarget.id, password: resetPasswordValue },
+                "Password updated",
+                ["password_reset", resetTarget.fullName],
+              );
+              setResetBusy(false);
+              setResetTarget(null);
+              setResetPasswordValue("");
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="reset-pwd-input">New strong password</Label>
+              <Input
+                id="reset-pwd-input"
+                type="password"
+                autoComplete="new-password"
+                value={resetPasswordValue}
+                onChange={(e) => setResetPasswordValue(e.target.value)}
+                placeholder="Min 12 chars with upper, lower, digit & symbol"
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setResetTarget(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={resetBusy}>
+                {resetBusy ? "Updating…" : "Update Password"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

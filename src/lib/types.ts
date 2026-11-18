@@ -5,7 +5,6 @@ export interface User {
   fullName: string;
   username: string;
   email: string;
-  password: string;
   designation: string;
   department: string;
   role: Role;
@@ -32,6 +31,18 @@ export interface CompanyHoliday {
   createdBy?: string;
 }
 
+export type GeofenceStatus = "Inside Office" | "Out of Bounds" | "Bypassed";
+
+export interface OfficeGeofenceConfig {
+  enabled: boolean;
+  officeName: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface AttendanceRecord {
   id: string;
   userId: string;
@@ -40,6 +51,10 @@ export interface AttendanceRecord {
   punchOut: string | null;
   hours: number;
   status?: AttendanceStatus;
+  punchInLatitude?: number | null;
+  punchInLongitude?: number | null;
+  punchInDistanceMeters?: number | null;
+  geofenceStatus?: GeofenceStatus;
 }
 
 export type TaskStatus =
@@ -235,6 +250,25 @@ export interface MonthlyReview {
   employeeRequirements: string;
 }
 
+export type VaultCategory = "Passwords" | "Secrets" | "Credentials" | "Small Text";
+export type VaultVisibility = "close" | "open";
+
+export interface VaultItem {
+  id: string;
+  title: string;
+  category: VaultCategory;
+  creatorId: string;
+  recipientId: string | null;
+  visibility: VaultVisibility;
+  passwordProtected: boolean;
+  encryptedPayload: string;
+  iv: string;
+  salt: string;
+  checkedByRecipient: boolean;
+  createdAt: string;
+  unlockedAt?: string | null;
+}
+
 export interface AppState {
   users: User[];
   attendance: AttendanceRecord[];
@@ -250,6 +284,8 @@ export interface AppState {
   eodReports: EodReport[];
   holidays: CompanyHoliday[];
   monthlyReviews: MonthlyReview[];
+  vaultItems: VaultItem[];
+  officeGeofence?: OfficeGeofenceConfig;
   ticketSeq: number;
   sessionUserId: string | null;
   /** Super Admin controls exactly what Admins can see and do. */

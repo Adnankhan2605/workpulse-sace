@@ -15,6 +15,8 @@ import {
   Fingerprint,
   LayoutDashboard,
   LifeBuoy,
+  Loader2,
+  Lock,
   LogIn,
   LogOut,
   PanelLeft,
@@ -29,7 +31,8 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useApp, type Perm, dateKey, newId, isoNow } from "@/lib/store";
+import { useApp, type Perm, dateKey } from "@/lib/store";
+import { formatDistanceMeters } from "@/lib/geofence";
 import { isMonthlyReviewDayToday } from "@/lib/cadence";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -46,6 +49,7 @@ import { SaceLogo } from "@/components/sace-logo";
 import type { Role } from "@/lib/types";
 import { EodLogoutDialog } from "@/components/eod-logout-dialog";
 import { fmtRelativeTime, fmtTime } from "@/lib/format";
+import { DualTimezoneClock } from "@/components/dual-timezone-clock";
 
 interface NavItem {
   to: string;
@@ -94,6 +98,12 @@ const NAV: NavItem[] = [
     to: "/tickets",
     label: "Support Tickets",
     icon: LifeBuoy,
+    roles: ["super_admin", "admin", "member"],
+  },
+  {
+    to: "/vault",
+    label: "Vault",
+    icon: Lock,
     roles: ["super_admin", "admin", "member"],
   },
   {
@@ -187,11 +197,30 @@ export function PageHeader({
   );
 }
 
-export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+export function EmptyState({
+  title,
+  hint,
+  description,
+  icon: Icon,
+  action,
+}: {
+  title: string;
+  hint?: string | undefined;
+  description?: string | undefined;
+  icon?: React.ComponentType<{ className?: string }> | undefined;
+  action?: React.ReactNode | undefined;
+}) {
+  const subtitle = hint ?? description;
   return (
     <div className="rounded-2xl border border-dashed border-border bg-card/60 p-10 text-center">
+      {Icon ? (
+        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+          <Icon className="h-5 w-5" />
+        </div>
+      ) : null}
       <p className="font-medium text-foreground">{title}</p>
-      {hint ? <p className="mt-1 text-sm text-muted-foreground">{hint}</p> : null}
+      {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
+      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
   );
 }
@@ -215,6 +244,7 @@ function getNotificationModuleIcon(href?: string) {
   if (href.startsWith("/leave")) return Plane;
   if (href.startsWith("/tickets")) return LifeBuoy;
   if (href.startsWith("/attendance")) return CalendarDays;
+  if (href.startsWith("/vault")) return Lock;
   return Bell;
 }
 
@@ -226,6 +256,7 @@ function getNotificationModuleColor(href?: string) {
   if (href.startsWith("/tickets")) return "bg-rose-500/15 text-rose-600 dark:text-rose-400";
   if (href.startsWith("/attendance"))
     return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
+  if (href.startsWith("/vault")) return "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400";
   return "bg-primary/15 text-primary";
 }
 
@@ -368,6 +399,11 @@ function NotificationBell() {
             displayList.map((n) => {
               const Icon = getNotificationModuleIcon(n.href);
               const colorClass = getNotificationModuleColor(n.href);
+              const [hrefPath, hrefQuery] = (n.href ?? "/dashboard").split("?");
+              const searchParams = hrefQuery
+                ? Object.fromEntries(new URLSearchParams(hrefQuery).entries())
+                : undefined;
+              const isVaultNotif = hrefPath === "/vault";
               return (
                 <div
                   key={n.id}
@@ -385,7 +421,8 @@ function NotificationBell() {
                     <Icon className="h-4 w-4" />
                   </div>
                   <Link
-                    to={n.href ?? "/dashboard"}
+                    to={hrefPath || "/dashboard"}
+                    {...(searchParams ? { search: searchParams as never } : {})}
                     onClick={() => {
                       markNotificationRead(n.id);
                       setOpen(false);
@@ -408,6 +445,11 @@ function NotificationBell() {
                     <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
                       {n.body}
                     </p>
+                    {isVaultNotif && (
+                      <span className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-[#8A007E] to-purple-700 px-2.5 py-0.5 text-[11px] font-semibold text-white shadow-xs">
+                        Check
+                      </span>
+                    )}
                   </Link>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {!n.read && (
@@ -450,8 +492,9 @@ function NotificationBell() {
 }
 
 function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
-  const { state, me, update, log } = useApp();
+  const { state, me, punchInWithLocation } = useApp();
   const navigate = useNavigate();
+  const [punchBusy, setPunchBusy] = React.useState(false);
   const todayKey = dateKey(new Date());
   const rec = state.attendance.find((a) => a.userId === me?.id && a.date === todayKey);
 
@@ -475,29 +518,28 @@ function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
     onOpenEod();
   };
 
-  const handleQuickPunchIn = () => {
-    const now = isoNow();
-    update((d) => {
-      let r = d.attendance.find((x) => x.userId === me?.id && x.date === todayKey);
-      if (!r) {
-        r = {
-          id: newId(),
-          userId: me!.id,
-          date: todayKey,
-          punchIn: now,
-          punchOut: null,
-          punchInProof: null,
-          punchOutProof: null,
-          status: "present",
-        };
-        d.attendance.push(r);
-      } else {
-        r.punchIn = now;
-        r.status = "present";
-      }
-    });
-    log("Punch In", "Quick punched in from header");
-    toast.success("Punched in successfully. Have a great workday!");
+  const handleQuickPunchIn = async () => {
+    if (punchBusy) return;
+    setPunchBusy(true);
+    const res = await punchInWithLocation("header");
+    setPunchBusy(false);
+
+    if (!res.ok) {
+      const distInfo =
+        typeof res.distanceMeters === "number" && typeof res.radiusMeters === "number"
+          ? ` (${formatDistanceMeters(res.distanceMeters)} away · limit ${formatDistanceMeters(res.radiusMeters)})`
+          : "";
+      toast.error(
+        `${res.error ?? "Access Denied: You are outside the office premises. Please move closer to punch in."}${distInfo}`,
+      );
+      return;
+    }
+
+    toast.success(
+      typeof res.distanceMeters === "number"
+        ? `Punched in (${res.status} · ${formatDistanceMeters(res.distanceMeters)} from office).`
+        : "Punched in successfully. Have a great workday!",
+    );
   };
 
   if (isPunchedIn) {
@@ -547,8 +589,18 @@ function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
         <span className="h-2 w-2 rounded-full bg-amber-500" />
         <span>Not punched in</span>
       </Link>
-      <Button size="sm" onClick={handleQuickPunchIn} className="h-8 gap-1.5 text-xs shadow-xs">
-        <LogIn className="h-3.5 w-3.5" /> Punch in
+      <Button
+        size="sm"
+        disabled={punchBusy}
+        onClick={handleQuickPunchIn}
+        className="h-8 gap-1.5 text-xs shadow-xs"
+      >
+        {punchBusy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <LogIn className="h-3.5 w-3.5" />
+        )}
+        {punchBusy ? "Locating..." : "Punch in"}
       </Button>
     </div>
   );
@@ -557,7 +609,7 @@ function HeaderPunchStatus({ onOpenEod }: { onOpenEod: () => void }) {
 const SIDEBAR_KEY = "sace-sidebar-open";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { me, logout, can, unreadCounts, markModuleRead } = useApp();
+  const { me, ready, logout, can, unreadCounts, markModuleRead } = useApp();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
@@ -582,13 +634,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   React.useEffect(() => {
-    if (me === null) navigate({ to: "/", replace: true });
-  }, [me, navigate]);
+    if (ready && me === null) navigate({ to: "/", replace: true });
+  }, [ready, me, navigate]);
 
-  if (!me) {
+  if (!ready || !me) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <p className="text-sm text-muted-foreground">Redirecting to sign in…</p>
+        <p className="text-sm text-muted-foreground">
+          {!ready ? "Verifying session…" : "Redirecting to sign in…"}
+        </p>
       </div>
     );
   }
@@ -711,6 +765,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {roleLabel(me.role)} · {me.designation}
             </p>
           </div>
+          <DualTimezoneClock variant="compact" className="hidden lg:flex" />
           <HeaderPunchStatus onOpenEod={() => setEodOpen(true)} />
           <NotificationBell />
           <Link to="/settings" aria-label="Profile settings">

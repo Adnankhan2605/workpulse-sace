@@ -66,6 +66,10 @@ function LeavePage() {
   const rows = scope.filter((l) => statusFilter === "all" || l.status === statusFilter);
 
   const decide = (id: string, status: "approved" | "rejected", comment: string) => {
+    if (!isManager) {
+      toast.error("Manager access required.");
+      return;
+    }
     const leave = state.leaves.find((l) => l.id === id);
     if (!leave) return;
     update((d) => {

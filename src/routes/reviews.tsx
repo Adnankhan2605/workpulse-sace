@@ -93,7 +93,7 @@ function MonthlyReviewsPage() {
   const [isSubmitModalOpen, setIsSubmitModalOpen] = React.useState(false);
 
   // Effective review date for current selected month
-  const [selYear, selMo] = selectedMonthKey.split("-").map(Number);
+  const [selYear = currentYear, selMo = currentMonth] = selectedMonthKey.split("-").map(Number);
   const effectiveReviewDate = React.useMemo(() => {
     return getMonthlyReviewEffectiveDate(selYear, selMo, state.holidays || []);
   }, [selYear, selMo, state.holidays]);

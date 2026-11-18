@@ -1,7 +1,16 @@
 import * as React from "react";
-import { getDbState, saveDbState } from "./db.functions";
+import {
+  getScopedPortalState,
+  punchInWithGeofence,
+  saveOfficeGeofenceConfig,
+  saveScopedPortalState,
+} from "./db.functions";
+import { getCurrentSession, loginPortal, logoutPortal } from "./auth.functions";
 import { supabase } from "@/integrations/supabase/client";
-import { DEFAULT_ADMIN_PERMS, DEFAULT_SEED_USERS, createSeedState, dateKey } from "./seed";
+import { DEFAULT_ADMIN_PERMS, dateKey } from "./seed";
+import { DEFAULT_OFFICE_GEOFENCE, evaluateGeofence, requestCurrentPosition } from "./geofence";
+import { clearPortalClientStorage } from "./security";
+import { setClientSessionToken } from "./portal-session-client";
 import {
   createAccount as createAccountFn,
   saveAccount as saveAccountFn,
@@ -16,35 +25,78 @@ import type {
   AppState,
   AttendanceRecord,
   AttendanceStatus,
+  GeofenceStatus,
   LeadDataset,
   LeaveRequest,
   Message,
+  OfficeGeofenceConfig,
   Perm,
   RecognitionAward,
-  Role,
   Task,
   TaskProof,
   Ticket,
   User,
+  VaultItem,
 } from "./types";
 
-/** Local & PostgreSQL persistent state storage */
-const KEY = "sace-portal-state-v3";
-const uid = () => Math.random().toString(36).slice(2, 10);
+function createEmptyState(): AppState {
+  return {
+    users: [],
+    attendance: [],
+    tasks: [],
+    leaves: [],
+    leads: [],
+    conversations: [],
+    messages: [],
+    tickets: [],
+    awards: [],
+    notifications: [],
+    audit: [],
+    eodReports: [],
+    holidays: [],
+    monthlyReviews: [],
+    vaultItems: [],
+    officeGeofence: { ...DEFAULT_OFFICE_GEOFENCE },
+    ticketSeq: 1000,
+    sessionUserId: null,
+    adminPerms: DEFAULT_ADMIN_PERMS,
+  };
+}
+
+const uid = () => {
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID().slice(0, 12);
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+};
 const nowIso = () => new Date().toISOString();
 
 type Result = { ok: boolean; error?: string };
 
+export interface PunchInLocationResult {
+  ok: boolean;
+  error?: string;
+  status?: GeofenceStatus;
+  distanceMeters?: number;
+  radiusMeters?: number;
+  officeName?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 interface Ctx {
   state: AppState;
   me: User | null;
-  /** false until the account list + session have loaded from the backend. */
   ready: boolean;
   dbConnected: boolean;
   syncToCloud: () => Promise<void>;
   login: (identifier: string, password: string) => Promise<Result>;
   logout: () => Promise<void>;
   update: (fn: (draft: AppState) => void) => void;
+  punchInWithLocation: (
+    source?: "dashboard" | "header" | "attendance",
+  ) => Promise<PunchInLocationResult>;
+  saveOfficeGeofence: (config: OfficeGeofenceConfig) => Promise<Result>;
   createAccount: (input: CreateAccountInput) => Promise<Result>;
   saveUser: (input: SaveAccountInput) => Promise<Result>;
   deleteAccount: (userId: string) => Promise<Result>;
@@ -88,243 +140,130 @@ function errMessage(e: unknown, fallback: string) {
   return cleaned || fallback;
 }
 
-function ensureDefaultAdminUser(list: User[]): User[] {
-  const adminSeed = DEFAULT_SEED_USERS[0];
-  const map = new Map<string, User>();
-  const result: User[] = [];
-  let foundAdmin = false;
-
-  for (const u of list || []) {
-    if (
-      u.id === "u-hakeem" ||
-      u.username.toLowerCase() === "hakeem" ||
-      u.email.toLowerCase() === "hakeem@sacegroup.com"
-    ) {
-      foundAdmin = true;
-      const mergedAdmin: User = {
-        ...adminSeed,
-        ...u,
-        id: "u-hakeem",
-        username: "hakeem",
-        email: "hakeem@sacegroup.com",
-        role: "super_admin",
-        active: true,
-        password: u.password && u.password.trim() ? u.password : "sace123",
-      };
-      result.push(mergedAdmin);
-      map.set("u-hakeem", mergedAdmin);
-    } else if (!map.has(u.id)) {
-      map.set(u.id, u);
-      result.push(u);
-    }
-  }
-
-  if (!foundAdmin) {
-    result.unshift(adminSeed);
-    map.set(adminSeed.id, adminSeed);
-  }
-
-  for (const seedU of DEFAULT_SEED_USERS) {
-    if (!map.has(seedU.id)) {
-      result.push(seedU);
-      map.set(seedU.id, seedU);
-    }
-  }
-
-  return result;
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = React.useState<AppState>(() => createSeedState());
-  const [hydrated, setHydrated] = React.useState(false);
-  const [users, setUsers] = React.useState<User[]>(() =>
-    ensureDefaultAdminUser(DEFAULT_SEED_USERS),
-  );
+  const [state, setState] = React.useState<AppState>(() => createEmptyState());
+  const [users, setUsers] = React.useState<User[]>([]);
   const [adminPerms, setPerms] = React.useState<Perm[]>(DEFAULT_ADMIN_PERMS);
   const [sessionUserId, setSessionUserId] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [dbConnected, setDbConnected] = React.useState(true);
+  const loadedFromServerRef = React.useRef(false);
+
+  const loadScopedState = React.useCallback(async (): Promise<Result> => {
+    try {
+      const res = await getScopedPortalState();
+      if (res && res.ok && res.data) {
+        setDbConnected(true);
+        const remote = res.data;
+        setState(remote);
+        setUsers(remote.users ?? []);
+        setPerms(remote.adminPerms ?? DEFAULT_ADMIN_PERMS);
+        loadedFromServerRef.current = true;
+        return { ok: true };
+      }
+      return { ok: false, error: "Unable to load workspace state." };
+    } catch (err) {
+      setDbConnected(false);
+      return { ok: false, error: errMessage(err, "Unable to load workspace state.") };
+    }
+  }, []);
 
   const syncToCloud = React.useCallback(async () => {
+    if (!sessionUserId) return;
     try {
-      const res = await saveDbState({ data: { state, users: ensureDefaultAdminUser(users) } });
+      const res = await saveScopedPortalState({
+        data: {
+          state: {
+            attendance: state.attendance,
+            tasks: state.tasks,
+            leaves: state.leaves,
+            leads: state.leads,
+            conversations: state.conversations,
+            messages: state.messages,
+            tickets: state.tickets,
+            awards: state.awards,
+            notifications: state.notifications,
+            audit: state.audit,
+            eodReports: state.eodReports,
+            holidays: state.holidays,
+            monthlyReviews: state.monthlyReviews,
+            vaultItems: state.vaultItems,
+            ticketSeq: state.ticketSeq,
+          },
+        },
+      });
       if (res && res.ok) {
         setDbConnected(true);
       }
     } catch {
       setDbConnected(false);
     }
-  }, [state, users]);
+  }, [sessionUserId, state]);
 
-  // ---- local & PostgreSQL sync ---------------------------------------------
-  React.useEffect(() => {
-    // 1. Initial local cache hydration
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as Partial<AppState>;
-        const hydratedUsers = ensureDefaultAdminUser(saved.users || []);
-        setState((prev) => ({
-          ...prev,
-          ...saved,
-          eodReports:
-            saved.eodReports && saved.eodReports.length > 0 ? saved.eodReports : prev.eodReports,
-          holidays: saved.holidays && saved.holidays.length > 0 ? saved.holidays : prev.holidays,
-          monthlyReviews:
-            saved.monthlyReviews && saved.monthlyReviews.length > 0
-              ? saved.monthlyReviews
-              : prev.monthlyReviews,
-          users: hydratedUsers,
-          sessionUserId: saved.sessionUserId ?? prev.sessionUserId,
-        }));
-        setUsers(hydratedUsers);
-        if (saved.sessionUserId) {
-          setSessionUserId(saved.sessionUserId);
-        }
-        if (saved.adminPerms) {
-          setPerms(saved.adminPerms);
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    setHydrated(true);
-
-    // 2. Fetch latest state from PostgreSQL database
-    getDbState()
-      .then((res) => {
-        if (res && res.ok && res.data) {
-          setDbConnected(true);
-          const remoteData = res.data;
-          setState((prev) => ({
-            ...prev,
-            ...remoteData,
-            tasks: remoteData.tasks || prev.tasks,
-            attendance: remoteData.attendance || prev.attendance,
-            eodReports: remoteData.eodReports || prev.eodReports,
-            leaves: remoteData.leaves || prev.leaves,
-            tickets: remoteData.tickets || prev.tickets,
-            conversations: remoteData.conversations || prev.conversations,
-            messages: remoteData.messages || prev.messages,
-            notifications: remoteData.notifications || prev.notifications,
-            awards: remoteData.awards || prev.awards,
-            leads: remoteData.leads || prev.leads,
-            audit: remoteData.audit || prev.audit,
-            holidays:
-              remoteData.holidays && remoteData.holidays.length > 0
-                ? remoteData.holidays
-                : prev.holidays,
-            monthlyReviews:
-              remoteData.monthlyReviews && remoteData.monthlyReviews.length > 0
-                ? remoteData.monthlyReviews
-                : prev.monthlyReviews,
-          }));
-          if (remoteData.users && remoteData.users.length > 0) {
-            setUsers(ensureDefaultAdminUser(remoteData.users));
-          }
-        }
-      })
-      .catch((e) => {
-        console.warn("PostgreSQL connection initialized with offline fallback:", e);
-        setDbConnected(false);
-      });
-  }, []);
-
-  React.useEffect(() => {
-    if (!hydrated) return;
-    try {
-      localStorage.setItem(KEY, JSON.stringify({ ...state, users, sessionUserId, adminPerms }));
-      // Also persist to PostgreSQL
-      void saveDbState({ data: { state, users: ensureDefaultAdminUser(users) } }).catch(() => {
-        /* ignore offline errors */
-      });
-    } catch {
-      /* ignore */
-    }
-  }, [state, users, sessionUserId, adminPerms, hydrated]);
-
-  // ---- accounts from the backend -----------------------------------------
-  const refreshAccounts = React.useCallback(async () => {
-    try {
-      const [{ data: profiles }, { data: roles }, { data: settings }] = await Promise.all([
-        supabase.from("profiles").select("*").order("full_name"),
-        supabase.from("user_roles").select("user_id, role"),
-        supabase.from("app_settings").select("value").eq("key", "admin_perms").maybeSingle(),
-      ]);
-
-      if (profiles && profiles.length > 0) {
-        const roleOf = new Map<string, Role>();
-        for (const r of roles ?? []) roleOf.set(r.user_id, r.role as Role);
-        const fetchedUsers: User[] = profiles.map((p) => ({
-          id: p.id,
-          fullName: p.full_name,
-          username: p.username,
-          email: p.email,
-          password: "",
-          designation: p.designation,
-          department: p.department,
-          role: roleOf.get(p.id) ?? "member",
-          reportingAdminId: p.reporting_admin_id,
-          active: p.active,
-          dailyVision: p.daily_vision,
-          avatarColor: p.avatar_color,
-          avatarUrl: (p as { avatar_url?: string | null }).avatar_url ?? null,
-          casualBalance: p.casual_balance,
-          sickBalance: p.sick_balance,
-        }));
-        setUsers((prev) => {
-          const map = new Map<string, User>();
-          for (const u of DEFAULT_SEED_USERS) map.set(u.id, u);
-          for (const u of prev) map.set(u.id, u);
-          for (const u of fetchedUsers) {
-            const existing = map.get(u.id);
-            map.set(u.id, {
-              ...u,
-              password: existing?.password ?? u.password,
-            });
-          }
-          return Array.from(map.values());
-        });
-      }
-      if (Array.isArray(settings?.value)) setPerms(settings.value as Perm[]);
-    } catch {
-      // Keep existing users on network/config fallback
-    }
-  }, []);
-
+  // Verify active server session on boot (never trust client localStorage for identity/state)
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const { data } = await supabase.auth.getUser();
+        const session = await getCurrentSession();
         if (!alive) return;
-        if (data?.user?.id) {
-          setSessionUserId(data.user.id);
-          await refreshAccounts();
+        if (session.authenticated && session.user) {
+          const authUser = session.user;
+          setUsers((prev) =>
+            prev.some((u) => u.id === authUser.id)
+              ? prev.map((u) => (u.id === authUser.id ? authUser : u))
+              : [...prev, authUser],
+          );
+          setSessionUserId(authUser.id);
+          await loadScopedState();
+        } else {
+          // Ensure any stale legacy cache is wiped if unauthenticated
+          setClientSessionToken(null);
+          clearPortalClientStorage();
         }
       } catch {
-        /* ignore */
+        setDbConnected(false);
       } finally {
         if (alive) setReady(true);
       }
     })();
+    return () => {
+      alive = false;
+    };
+  }, [loadScopedState]);
 
-    try {
-      const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-        if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
-        setSessionUserId(session?.user?.id ?? null);
-        if (session?.user) void refreshAccounts();
-      });
-      return () => {
-        alive = false;
-        sub?.subscription?.unsubscribe?.();
-      };
-    } catch {
-      return () => {
-        alive = false;
-      };
-    }
-  }, [refreshAccounts]);
+  // Persist scoped updates back to server whenever authenticated state changes
+  React.useEffect(() => {
+    if (!sessionUserId || !loadedFromServerRef.current) return;
+    void saveScopedPortalState({
+      data: {
+        state: {
+          attendance: state.attendance,
+          tasks: state.tasks,
+          leaves: state.leaves,
+          leads: state.leads,
+          conversations: state.conversations,
+          messages: state.messages,
+          tickets: state.tickets,
+          awards: state.awards,
+          notifications: state.notifications,
+          audit: state.audit,
+          eodReports: state.eodReports,
+          holidays: state.holidays,
+          monthlyReviews: state.monthlyReviews,
+          vaultItems: state.vaultItems,
+          ticketSeq: state.ticketSeq,
+        },
+      },
+    })
+      .then(() => setDbConnected(true))
+      .catch(() => setDbConnected(false));
+  }, [state, sessionUserId]);
+
+  const refreshAccounts = React.useCallback(async () => {
+    if (!sessionUserId) return;
+    await loadScopedState();
+  }, [sessionUserId, loadScopedState]);
 
   const update = React.useCallback((fn: (draft: AppState) => void) => {
     setState((prev) => {
@@ -495,11 +434,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const ticketsCount = Math.max(actionableTickets, unreadTicketNotifs);
 
+    const uncheckedVaults = (merged.vaultItems ?? []).filter(
+      (v) => v.recipientId === me.id && !v.checkedByRecipient,
+    ).length;
+    const unreadVaultNotifs = merged.notifications.filter(
+      (n) => n.userId === me.id && !n.read && n.href?.startsWith("/vault"),
+    ).length;
+    const vaultCount = Math.max(uncheckedVaults, unreadVaultNotifs);
+
     return {
       "/messages": messagesCount,
       "/tasks": tasksCount,
       "/leave": leaveCount,
       "/tickets": ticketsCount,
+      "/vault": vaultCount,
     };
   }, [
     me,
@@ -509,6 +457,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     merged.tasks,
     merged.leaves,
     merged.tickets,
+    merged.vaultItems,
   ]);
 
   const value: Ctx = {
@@ -521,197 +470,189 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     update,
 
     login: async (identifier, password) => {
-      const raw = identifier.trim();
-      const rawPassword = password.trim();
-      if (!raw || !rawPassword)
+      const cleanId = identifier.trim();
+      if (!cleanId || !password) {
         return { ok: false, error: "Enter your username or email and password." };
-      let email = raw.toLowerCase();
-
-      // Check Super Admin Hakeem immediate match
-      const isHakeem =
-        raw.toLowerCase() === "hakeem" ||
-        raw.toLowerCase() === "hakeem@sacegroup.com" ||
-        raw.toLowerCase() === "u-hakeem";
-
-      if (isHakeem) {
-        if (rawPassword === "sace123") {
-          setUsers((prev) => ensureDefaultAdminUser(prev));
-          setSessionUserId("u-hakeem");
-          return { ok: true };
-        } else {
-          return { ok: false, error: "Incorrect password. Please verify and try again." };
-        }
       }
 
       try {
-        if (!email.includes("@")) {
-          const { data } = await supabase.rpc("get_email_for_username", { _identifier: raw });
-          if (data) email = data;
+        const res = await loginPortal({ data: { identifier: cleanId, password } });
+        if (!res.ok || !res.user) {
+          return { ok: false, error: res.error ?? "Invalid username/email or password." };
         }
-        const { data: signIn, error } = await supabase.auth.signInWithPassword({
-          email,
-          password: rawPassword,
-        });
-        if (!error && signIn?.user) {
-          await refreshAccounts();
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("active")
-            .eq("id", signIn.user.id)
-            .maybeSingle();
-          if (profile && profile.active === false) {
-            await supabase.auth.signOut();
-            return { ok: false, error: "This account is inactive. Contact your admin." };
-          }
-          setSessionUserId(signIn.user.id);
-          return { ok: true };
-        }
-      } catch {
-        /* fallback to database / local accounts */
-      }
 
-      // Match against synchronized users list
-      const allCurrentUsers = ensureDefaultAdminUser(users);
-      const found = allCurrentUsers.find(
-        (u) =>
-          u.username.toLowerCase() === raw.toLowerCase() ||
-          u.email.toLowerCase() === raw.toLowerCase() ||
-          u.email.toLowerCase() === email.toLowerCase() ||
-          u.id.toLowerCase() === raw.toLowerCase(),
-      );
+        const authUser = res.user;
+        // Persist signed session token for header auth fallback (iframe-safe) & seed user synchronously
+        setClientSessionToken(res.sessionToken ?? null);
+        setUsers((prev) =>
+          prev.some((u) => u.id === authUser.id)
+            ? prev.map((u) => (u.id === authUser.id ? authUser : u))
+            : [...prev, authUser],
+        );
+        setSessionUserId(authUser.id);
+        setReady(true);
 
-      if (found) {
-        if (!found.active) {
-          return { ok: false, error: "This account is inactive. Contact your admin." };
+        const loaded = await loadScopedState();
+        if (!loaded.ok && loaded.error?.toLowerCase().includes("unauthorized")) {
+          setClientSessionToken(null);
+          setSessionUserId(null);
+          setUsers([]);
+          return {
+            ok: false,
+            error: "Session could not be verified. Please refresh and sign in again.",
+          };
         }
-        // Verify password
-        if (found.password && found.password.trim() !== "" && found.password !== rawPassword) {
-          return { ok: false, error: "Incorrect password. Please verify and try again." };
-        }
-        setSessionUserId(found.id);
+
         return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMessage(err, "Unable to sign in.") };
       }
-
-      return {
-        ok: false,
-        error: "Invalid username/email or password. Please check and try again.",
-      };
     },
+
     logout: async () => {
+      const activeId = sessionUserId;
+      loadedFromServerRef.current = false;
+      setClientSessionToken(null);
+      try {
+        await logoutPortal();
+      } catch {
+        /* ignore */
+      }
       try {
         await supabase.auth.signOut();
       } catch {
         /* ignore */
       }
+      clearPortalClientStorage(activeId);
       setSessionUserId(null);
+      setUsers([]);
+      setState(createEmptyState());
     },
+
+    punchInWithLocation: async (source = "dashboard") => {
+      const activeConfig = state.officeGeofence ?? DEFAULT_OFFICE_GEOFENCE;
+      try {
+        const coords = await requestCurrentPosition();
+        const clientEval = evaluateGeofence(coords.latitude, coords.longitude, activeConfig);
+
+        const serverRes = await punchInWithGeofence({
+          data: {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            accuracyMeters: coords.accuracyMeters,
+            source,
+          },
+        });
+
+        await loadScopedState();
+
+        if (!serverRes.ok || !serverRes.allowed) {
+          return {
+            ok: false,
+            status: serverRes.status ?? clientEval.status,
+            distanceMeters: serverRes.distanceMeters ?? clientEval.distanceMeters,
+            radiusMeters: serverRes.radiusMeters ?? activeConfig.radiusMeters,
+            officeName: serverRes.officeName ?? activeConfig.officeName,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            error:
+              serverRes.error ??
+              "Access Denied: You are outside the office premises. Please move closer to punch in.",
+          };
+        }
+
+        return {
+          ok: true,
+          status: serverRes.status,
+          distanceMeters: serverRes.distanceMeters,
+          radiusMeters: serverRes.radiusMeters,
+          officeName: serverRes.officeName,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error: errMessage(
+            err,
+            "Unable to verify your GPS location. Please enable location permissions.",
+          ),
+        };
+      }
+    },
+
+    saveOfficeGeofence: async (config) => {
+      try {
+        const res = await saveOfficeGeofenceConfig({ data: config });
+        if (res.ok) {
+          await loadScopedState();
+          return { ok: true };
+        }
+        return { ok: false, error: "Could not save office location settings." };
+      } catch (err) {
+        return { ok: false, error: errMessage(err, "Could not save office location settings.") };
+      }
+    },
+
     createAccount: async (input) => {
-      const id = `u-${uid()}`;
-      const base = (input.email.split("@")[0] ?? "user").replace(/[^a-z0-9._-]/g, "") || "user";
-      const newAcc: User = {
-        id,
-        fullName: input.fullName.trim(),
-        username: base,
-        email: input.email.trim().toLowerCase(),
-        password: input.password.trim(),
-        designation: input.designation.trim() || "Team Member",
-        department: input.department.trim() || "General",
-        role: input.role,
-        reportingAdminId: input.reportingAdminId,
-        active: true,
-        dailyVision: null,
-        avatarColor: input.avatarColor,
-        avatarUrl: null,
-        casualBalance: 12,
-        sickBalance: 8,
-      };
-
-      setUsers((prev) => {
-        const filtered = prev.filter((u) => u.email.toLowerCase() !== newAcc.email.toLowerCase());
-        return [...filtered, newAcc];
-      });
-
       try {
         await createAccountFn({ data: input });
-        await refreshAccounts();
-      } catch {
-        /* fallback handled gracefully */
+        await loadScopedState();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMessage(err, "Could not create account.") };
       }
-
-      return { ok: true };
     },
-    saveUser: async (input) => {
-      // Optimistically update local state immediately so UI updates instantly
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id !== input.userId) return u;
-          return {
-            ...u,
-            fullName: input.fullName !== undefined ? input.fullName.trim() : u.fullName,
-            email: input.email !== undefined ? input.email.trim().toLowerCase() : u.email,
-            designation: input.designation !== undefined ? input.designation.trim() : u.designation,
-            department: input.department !== undefined ? input.department.trim() : u.department,
-            dailyVision: input.dailyVision !== undefined ? input.dailyVision : u.dailyVision,
-            avatarUrl: input.avatarUrl !== undefined ? input.avatarUrl : u.avatarUrl,
-            reportingAdminId:
-              input.reportingAdminId !== undefined ? input.reportingAdminId : u.reportingAdminId,
-            casualBalance:
-              input.casualBalance !== undefined ? input.casualBalance : u.casualBalance,
-            sickBalance: input.sickBalance !== undefined ? input.sickBalance : u.sickBalance,
-            active: input.active !== undefined ? input.active : u.active,
-            role: input.role !== undefined ? input.role : u.role,
-          };
-        }),
-      );
 
+    saveUser: async (input) => {
       try {
         await saveAccountFn({ data: input });
-        await refreshAccounts();
+        await loadScopedState();
         return { ok: true };
-      } catch {
-        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMessage(err, "Could not save profile changes.") };
       }
     },
+
     deleteAccount: async (userId: string) => {
       if (!me || me.role !== "super_admin") {
         return { ok: false, error: "Only a Super Admin can delete an account." };
       }
       if (userId === me.id || userId === "u-hakeem") {
-        return { ok: false, error: "You cannot delete the primary Super Admin account." };
+        return {
+          ok: false,
+          error: "You cannot delete your own or the primary Super Admin account.",
+        };
       }
 
       const target = users.find((u) => u.id === userId);
       const name = target ? target.fullName : userId;
 
-      // Update state and remove user
-      setUsers((prev) =>
-        prev
-          .filter((u) => u.id !== userId)
-          .map((u) => (u.reportingAdminId === userId ? { ...u, reportingAdminId: null } : u)),
-      );
-
-      // Call backend server function
       try {
         await deleteAccountFn({ data: { userId } });
-        await refreshAccounts();
-      } catch {
-        /* fallback handled gracefully */
+        await loadScopedState();
+        log("account_deleted", `${name} (${userId}) was permanently deleted`);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: errMessage(err, "Could not delete account.") };
       }
-
-      log("account_deleted", `${name} (${userId}) was permanently deleted`);
-      return { ok: true };
     },
+
     refreshAccounts,
+
     can: (perm) => {
       if (!me) return false;
       if (me.role === "super_admin") return SUPER_ADMIN_PERMS.includes(perm);
       if (me.role === "admin") return adminPerms.includes(perm) && perm !== "manage_admins";
       return false;
     },
+
     setAdminPerms: (perms) => {
-      setPerms(perms);
-      void saveAdminPermsFn({ data: { perms } }).catch(() => refreshAccounts());
+      void saveAdminPermsFn({ data: { perms } })
+        .then(() => setPerms(perms))
+        .catch(() => void loadScopedState());
     },
+
     visibleUsers: () => {
       if (!me) return [];
       if (me.role === "super_admin") return users;
@@ -719,6 +660,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return users.filter((u) => u.reportingAdminId === me.id || u.id === me.id);
       return [me];
     },
+
     attendanceStatus: (userId, date) => {
       const key = dateKey(date);
       const wd = date.getDay();
@@ -744,6 +686,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (d0.getTime() > today.getTime()) return "week_off";
       return "absent";
     },
+
     notify,
     markNotificationRead,
     markAllNotificationsRead,
@@ -753,8 +696,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     unreadCounts,
     log,
     reset: () => {
-      setState(createSeedState());
-      setUsers(DEFAULT_SEED_USERS);
+      setClientSessionToken(null);
+      clearPortalClientStorage(sessionUserId);
+      loadedFromServerRef.current = false;
+      setState(createEmptyState());
+      setUsers([]);
       setSessionUserId(null);
     },
   };
@@ -780,12 +726,15 @@ export async function askAddyAssistant(
 export type {
   AppState,
   AttendanceRecord,
+  GeofenceStatus,
   LeadDataset,
   LeaveRequest,
   Message,
+  OfficeGeofenceConfig,
   RecognitionAward,
   Task,
   TaskProof,
   Ticket,
   User,
+  VaultItem,
 };

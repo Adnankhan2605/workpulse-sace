@@ -14,7 +14,9 @@ import type {
   EodReport,
   CompanyHoliday,
   MonthlyReview,
+  VaultItem,
 } from "./types";
+import { DEFAULT_OFFICE_GEOFENCE } from "./geofence";
 
 export const DEFAULT_ADMIN_PERMS: Perm[] = [
   "manage_users",
@@ -35,7 +37,6 @@ export const DEFAULT_SEED_USERS: User[] = [
     fullName: "Hakeem",
     username: "hakeem",
     email: "hakeem@sacegroup.com",
-    password: "sace123",
     designation: "Managing Director & Super Admin",
     department: "Executive",
     role: "super_admin",
@@ -52,7 +53,6 @@ export const DEFAULT_SEED_USERS: User[] = [
     fullName: "Sarah Jenkins",
     username: "sarah",
     email: "sarah@sacegroup.com",
-    password: "sace123",
     designation: "Operations Lead",
     department: "Operations",
     role: "admin",
@@ -69,7 +69,6 @@ export const DEFAULT_SEED_USERS: User[] = [
     fullName: "Farhan Malik",
     username: "farhan",
     email: "farhan@sacegroup.com",
-    password: "sace123",
     designation: "Admissions Consultant",
     department: "Admissions",
     role: "member",
@@ -321,6 +320,8 @@ export function createSeedState(): AppState {
       },
     ] as CompanyHoliday[],
     monthlyReviews: [] as MonthlyReview[],
+    vaultItems: [] as VaultItem[],
+    officeGeofence: { ...DEFAULT_OFFICE_GEOFENCE },
     ticketSeq: 101,
     sessionUserId: null,
     adminPerms: DEFAULT_ADMIN_PERMS,

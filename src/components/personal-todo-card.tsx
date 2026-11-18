@@ -17,9 +17,13 @@ export default function PersonalTodoCard() {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [inputText, setInputText] = useState("");
 
-  const storageKey = me ? `sace_todos_${me.id}` : "sace_todos_guest";
+  const storageKey = me ? `sace_todos_${me.id}` : null;
 
   useEffect(() => {
+    if (!storageKey) {
+      setTodos([]);
+      return;
+    }
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
@@ -49,6 +53,7 @@ export default function PersonalTodoCard() {
 
   const saveTodos = (updated: TodoItem[]) => {
     setTodos(updated);
+    if (!storageKey) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(updated));
     } catch (e) {
@@ -58,9 +63,9 @@ export default function PersonalTodoCard() {
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!me || !inputText.trim()) return;
     const newItem: TodoItem = {
-      id: Math.random().toString(36).substring(2, 9),
+      id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}`,
       text: inputText.trim(),
       completed: false,
       createdAt: new Date().toISOString(),
@@ -78,6 +83,8 @@ export default function PersonalTodoCard() {
     const updated = todos.filter((t) => t.id !== id);
     saveTodos(updated);
   };
+
+  if (!me) return null;
 
   const remainingCount = todos.filter((t) => !t.completed).length;
 

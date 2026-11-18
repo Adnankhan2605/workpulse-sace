@@ -1,6 +1,7 @@
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   CalendarCheck,
   CalendarDays,
   Check,
@@ -13,6 +14,8 @@ import {
   Eye,
   FileCheck2,
   ListChecks,
+  Loader2,
+  MapPin,
   Plane,
   Search,
   Send,
@@ -44,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApp, dateKey, newId, isoNow } from "@/lib/store";
+import { formatDistanceMeters } from "@/lib/geofence";
 import { fmtTime, getRecordActualHours, hoursLabel, titleCase } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type {
@@ -89,7 +93,8 @@ const DOT: Record<AttendanceStatus, string> = {
 };
 
 function AttendancePage() {
-  const { state, me, visibleUsers, attendanceStatus, update, notify } = useApp();
+  const { state, me, visibleUsers, attendanceStatus, punchInWithLocation, update, notify } =
+    useApp();
   const isAdmin = me?.role !== "member";
   const [activeTab, setActiveTab] = React.useState<"daily" | "calendar">(
     isAdmin ? "daily" : "calendar",
@@ -102,6 +107,12 @@ function AttendancePage() {
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [deptFilter, setDeptFilter] = React.useState("all");
   const [selectedUserIds, setSelectedUserIds] = React.useState<string[]>([]);
+  const [punchBusy, setPunchBusy] = React.useState(false);
+  const [geofenceError, setGeofenceError] = React.useState<{
+    message: string;
+    distanceMeters?: number;
+    radiusMeters?: number;
+  } | null>(null);
 
   React.useEffect(() => {
     if (me && !selectedUserId) {
@@ -115,28 +126,34 @@ function AttendancePage() {
   const myRecordToday = state.attendance.find((a) => a.userId === me.id && a.date === todayKey);
   const isPunchedIn = !!myRecordToday?.punchIn && !myRecordToday?.punchOut;
 
-  // Punch actions for active user
-  const punchIn = () => {
-    if (myRecordToday?.punchIn) return;
-    update((d) => {
-      const existing = d.attendance.find((a) => a.userId === me.id && a.date === todayKey);
-      if (existing) {
-        existing.punchIn = isoNow();
-        existing.punchOut = null;
-        existing.status = "present";
-      } else {
-        d.attendance.push({
-          id: newId(),
-          userId: me!.id,
-          date: todayKey,
-          punchIn: isoNow(),
-          punchOut: null,
-          hours: 0,
-          status: "present",
-        });
-      }
-    });
-    toast.success("Punched in. Your daily attendance is now active.");
+  // Punch actions for active user (enforces geofence + backend audit trail)
+  const punchIn = async () => {
+    if (myRecordToday?.punchIn || punchBusy) return;
+    setPunchBusy(true);
+    setGeofenceError(null);
+
+    const res = await punchInWithLocation("attendance");
+    setPunchBusy(false);
+
+    if (!res.ok) {
+      const msg =
+        res.error ??
+        "Access Denied: You are outside the office premises. Please move closer to punch in.";
+      setGeofenceError({
+        message: msg,
+        ...(res.distanceMeters !== undefined ? { distanceMeters: res.distanceMeters } : {}),
+        ...(res.radiusMeters !== undefined ? { radiusMeters: res.radiusMeters } : {}),
+      });
+      toast.error(msg);
+      return;
+    }
+
+    setGeofenceError(null);
+    toast.success(
+      typeof res.distanceMeters === "number"
+        ? `Punched in (${res.status} · ${formatDistanceMeters(res.distanceMeters)} from ${res.officeName ?? "office"}).`
+        : "Punched in. Your daily attendance is now active.",
+    );
   };
 
   const punchOut = () => {
@@ -262,6 +279,10 @@ function AttendancePage() {
 
   // Bulk Actions
   const handleBulkMarkPresent = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     if (selectedUserIds.length === 0) return;
     update((d) => {
       selectedUserIds.forEach((uid) => {
@@ -289,6 +310,10 @@ function AttendancePage() {
   };
 
   const handleBulkMarkWeekOff = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     if (selectedUserIds.length === 0) return;
     update((d) => {
       selectedUserIds.forEach((uid) => {
@@ -316,6 +341,10 @@ function AttendancePage() {
   };
 
   const handleBulkSendReminder = () => {
+    if (!isAdmin) {
+      toast.error("Admin access required.");
+      return;
+    }
     if (selectedUserIds.length === 0) return;
     selectedUserIds.forEach((uid) => {
       notify(
@@ -408,8 +437,13 @@ function AttendancePage() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {!myRecordToday?.punchIn ? (
-              <Button size="sm" onClick={punchIn} className="gap-2 shadow-sm">
-                <Clock className="h-4 w-4" /> Punch in today
+              <Button size="sm" disabled={punchBusy} onClick={punchIn} className="gap-2 shadow-sm">
+                {punchBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <MapPin className="h-4 w-4" />
+                )}
+                {punchBusy ? "Verifying GPS..." : "Punch in today"}
               </Button>
             ) : isPunchedIn ? (
               <Button size="sm" variant="destructive" onClick={punchOut} className="gap-2">
@@ -424,6 +458,25 @@ function AttendancePage() {
           </div>
         }
       />
+
+      {geofenceError && !myRecordToday?.punchIn && (
+        <div
+          role="alert"
+          className="mb-5 flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-semibold">{geofenceError.message}</p>
+            {typeof geofenceError.distanceMeters === "number" &&
+              typeof geofenceError.radiusMeters === "number" && (
+                <p className="text-[11px] opacity-90 tabular-nums">
+                  Current distance: {formatDistanceMeters(geofenceError.distanceMeters)} · Allowed
+                  office radius: {formatDistanceMeters(geofenceError.radiusMeters)}
+                </p>
+              )}
+          </div>
+        </div>
+      )}
 
       {isAdmin ? (
         <Tabs
@@ -520,7 +573,7 @@ function AttendancePage() {
                 label={isDailyWeekend ? "Week Off" : "Absent / Not in"}
                 value={isDailyWeekend ? totalMembers : absentCount}
                 icon={Clock}
-                accent={isDailyWeekend ? "teal" : undefined}
+                {...(isDailyWeekend ? { accent: "teal" as const } : {})}
               />
             </div>
 
@@ -761,9 +814,19 @@ function AttendancePage() {
                                 </td>
                                 <td className="px-4 py-4 text-xs tabular-nums">
                                   {record?.punchIn ? (
-                                    <span className="font-semibold text-foreground">
-                                      {fmtTime(record.punchIn)}
-                                    </span>
+                                    <div className="space-y-0.5">
+                                      <span className="font-semibold text-foreground block">
+                                        {fmtTime(record.punchIn)}
+                                      </span>
+                                      {record.geofenceStatus && (
+                                        <span className="text-[11px] text-muted-foreground">
+                                          {record.geofenceStatus}
+                                          {typeof record.punchInDistanceMeters === "number"
+                                            ? ` · ${formatDistanceMeters(record.punchInDistanceMeters)}`
+                                            : ""}
+                                        </span>
+                                      )}
+                                    </div>
                                   ) : (
                                     <span className="text-muted-foreground">—</span>
                                   )}
@@ -1015,19 +1078,19 @@ function AttendanceCalendarView(props: CalendarViewProps) {
         <StatCard
           label="Total hours"
           value={hoursLabel(totalHours)}
-          hint={
-            expectedHours > 0
-              ? `${expectedHours}h target${holidayDeductedHours > 0 ? ` (-${holidayDeductedHours}h holidays)` : ""}`
-              : undefined
-          }
+          {...(expectedHours > 0
+            ? {
+                hint: `${expectedHours}h target${holidayDeductedHours > 0 ? ` (-${holidayDeductedHours}h holidays)` : ""}`,
+              }
+            : {})}
           accent="purple"
         />
         <StatCard
           label="Attendance rate"
           value={`${attendanceRate}%`}
-          hint={
-            expectedHours > 0 ? `${hoursLabel(totalHours)} of ${expectedHours}h target` : undefined
-          }
+          {...(expectedHours > 0
+            ? { hint: `${hoursLabel(totalHours)} of ${expectedHours}h target` }
+            : {})}
           accent="teal"
         />
         <StatCard label="Absent days" value={absents} accent="success" />
@@ -1193,6 +1256,17 @@ function AttendanceCalendarView(props: CalendarViewProps) {
                 <span className="text-muted-foreground">Punch in</span>
                 <span>{fmtTime(selectedRecord?.punchIn)}</span>
               </div>
+              {selectedRecord?.geofenceStatus && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Location audit</span>
+                  <span className="tabular-nums text-xs font-medium text-foreground">
+                    {selectedRecord.geofenceStatus}
+                    {typeof selectedRecord.punchInDistanceMeters === "number"
+                      ? ` · ${formatDistanceMeters(selectedRecord.punchInDistanceMeters)}`
+                      : ""}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Punch out</span>
                 <span>{fmtTime(selectedRecord?.punchOut)}</span>

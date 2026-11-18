@@ -55,13 +55,14 @@ export function StatCard({
   value: React.ReactNode;
   hint?: string;
   icon?: React.ComponentType<{ className?: string }>;
-  accent?: "primary" | "purple" | "teal" | "success";
+  accent?: "primary" | "purple" | "teal" | "success" | "warning";
 }) {
   const bg = {
     primary: "bg-primary/10 text-primary",
     purple: "bg-brand-purple/10 text-brand-purple",
     teal: "bg-brand-gold/15 text-brand-gold",
     success: "bg-success/12 text-success",
+    warning: "bg-warning/15 text-warning",
   }[accent];
   return (
     <Card className="rounded-2xl border-border/70 shadow-sm">
